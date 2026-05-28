@@ -1,0 +1,27 @@
+# Environment
+.env
+*.log
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Uploads/Outputs
+backend/src/uploads/*
+backend/src/outputs/*
+!backend/src/uploads/.gitkeep
+!backend/src/outputs/.gitkeep
+
+# Python
+python-engine/models/*
+!python-engine/models/.gitkeep
+python-engine/__pycache__/
+python-engine/modules/__pycache__/
+python-engine/utils/__pycache__/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
