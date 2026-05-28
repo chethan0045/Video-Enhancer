@@ -25,3 +25,12 @@ python-engine/utils/__pycache__/
 .idea/
 *.swp
 *.swo
+
+# Angular cache
+.angular/
+
+# DB files (auto-generated)
+backend/data/*.db
+
+# Backend outputs
+backend/src/outputs/*
