@@ -49,6 +49,16 @@ app.get('/api/health', (_, res) => {
   });
 });
 
+// ── Serve Angular frontend in production ──
+if (process.env.NODE_ENV === 'production') {
+  const frontendDist = path.join(__dirname, '..', '..', 'frontend', 'dist');
+  app.use(express.static(frontendDist));
+  app.get('*', (req, res) => {
+    if (req.path.startsWith('/api/') || req.path.startsWith('/uploads') || req.path.startsWith('/outputs')) return;
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+}
+
 setupWebSocket(io);
 
 const PORT = process.env.PORT || 5000;
