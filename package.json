@@ -4,6 +4,7 @@
   "description": "AI Cinematic Video Remaster Engine — RED-quality restoration from old footage",
   "private": true,
   "scripts": {
+    "postinstall": "cd frontend && npm install",
     "install:all": "npm install; cd backend; npm install; cd ../frontend; npm install",
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
     "dev:backend": "cd backend && npm run dev",
