@@ -51,7 +51,7 @@ app.get('/api/health', (_, res) => {
 
 // ── Serve Angular frontend in production ──
 if (process.env.NODE_ENV === 'production') {
-  const frontendDist = path.join(__dirname, '..', '..', 'frontend', 'dist');
+  const frontendDist = path.join(__dirname, '..', '..', 'frontend', 'dist', 'browser');
   app.use(express.static(frontendDist));
   app.get('*', (req, res) => {
     if (req.path.startsWith('/api/') || req.path.startsWith('/uploads') || req.path.startsWith('/outputs')) return;
