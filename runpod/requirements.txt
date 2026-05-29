@@ -1,0 +1,11 @@
+# Installed on top of the pinned torch/torchvision in the Dockerfile.
+# torchvision is pinned to 0.15.2 so basicsr's `functional_tensor` import works
+# (it was removed in torchvision >= 0.16, which otherwise breaks Real-ESRGAN/GFPGAN).
+realesrgan==0.3.0
+gfpgan==1.3.8
+basicsr==1.4.2
+facexlib==0.3.0
+opencv-python-headless==4.9.0.80
+numpy==1.26.4
+runpod>=1.6.0
+boto3>=1.34.0   # optional, only used when S3 output is configured

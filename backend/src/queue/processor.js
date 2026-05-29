@@ -693,6 +693,75 @@ async function processSubtitle(jobId, inputPath, settings = {}) {
   console.log(`[Subtitle] Job ${jobId} complete`);
 }
 
+/**
+ * AI enhancement tier — dispatches to a RunPod GPU endpoint (Real-ESRGAN + GFPGAN).
+ * Falls back to the FFmpeg tier when RunPod isn't configured or the GPU job fails,
+ * so the feature degrades gracefully on hosts without GPU access.
+ */
+async function processAiEnhance(jobId, inputPath, settings = {}) {
+  const job = await VideoJob.findById(jobId);
+  if (!job) throw new Error('Job not found');
+
+  const runpod = require('../services/runpod');
+  const base = (process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '');
+  if (!runpod.configured() || !base) {
+    console.warn('[AI] RunPod not configured (need RUNPOD_API_KEY, RUNPOD_ENDPOINT_ID, PUBLIC_BASE_URL) — using FFmpeg tier');
+    return processVideo(jobId, inputPath, settings);
+  }
+
+  const p = settings.pipeline || job.pipeline || {};
+  const videoUrl = `${base}/uploads/${path.basename(inputPath)}`;
+
+  await VideoJob.updateById(jobId, { $set: { status: 'processing', progress: 10 } });
+  emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: 10 });
+
+  let output;
+  try {
+    output = await runpod.runToCompletion({
+      video_url: videoUrl,
+      pipeline: {
+        upscale: { enabled: p.upscale?.enabled !== false, scale: 4 },
+        faceRestore: { enabled: p.faceRestore?.enabled !== false, weight: p.faceRestore?.strength ?? 0.5 },
+        fps: 30,
+      },
+    }, (st) => {
+      const pct = st === 'IN_PROGRESS' ? 60 : st === 'IN_QUEUE' ? 20 : 40;
+      emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: pct });
+      VideoJob.updateById(jobId, { $set: { progress: pct } }).catch(() => {});
+    });
+  } catch (err) {
+    console.error('[AI] RunPod job failed, falling back to FFmpeg:', err.message);
+    return processVideo(jobId, inputPath, settings);
+  }
+
+  const outputDir = path.join(__dirname, '..', 'outputs', jobId);
+  fs.mkdirSync(outputDir, { recursive: true });
+  const outputVideo = path.join(outputDir, 'output.mp4');
+  if (output?.output_url) {
+    const res = await fetch(output.output_url);
+    if (!res.ok) throw new Error(`Failed to download RunPod output: ${res.status}`);
+    fs.writeFileSync(outputVideo, Buffer.from(await res.arrayBuffer()));
+  } else if (output?.output_base64) {
+    fs.writeFileSync(outputVideo, Buffer.from(output.output_base64, 'base64'));
+  } else {
+    throw new Error('RunPod returned no output');
+  }
+
+  const info = getVideoInfo(outputVideo);
+  // Mark all enhancement stages done (AI tier doesn't report per-stage progress).
+  const done = (job.pipelineStages || []).map(s => ({ ...s, status: 'completed', progress: 100 }));
+  await VideoJob.updateById(jobId, {
+    $set: {
+      status: 'completed', progress: 100, completedAt: new Date(), outputPath: outputVideo,
+      pipelineStages: done,
+      inputResolution: { width: output.width || info.width, height: output.height || info.height },
+      inputDuration: info.duration,
+    },
+  });
+  emitJobProgress(jobId, { userId: job.userId, status: 'completed', progress: 100 });
+  console.log(`[AI] Job ${jobId} complete via RunPod GPU`);
+}
+
 // Single dispatch entry — routes a job to the right processor by mode.
 function runJob({ jobId, inputPath, inputPaths, pipeline, mode }) {
   const settings = { pipeline };
@@ -701,7 +770,10 @@ function runJob({ jobId, inputPath, inputPaths, pipeline, mode }) {
     case 'merge': return processMerge(jobId, inputPaths, settings);
     case 'extract-audio': return processExtractAudio(jobId, inputPath, settings);
     case 'subtitle': return processSubtitle(jobId, inputPath, settings);
-    default: return processVideo(jobId, inputPath, settings);
+    default:
+      // 'enhance' — AI (GPU) tier when requested, else the fast FFmpeg tier.
+      if (pipeline?.engine === 'ai') return processAiEnhance(jobId, inputPath, settings);
+      return processVideo(jobId, inputPath, settings);
   }
 }
 
@@ -712,6 +784,7 @@ function getCapabilities() {
     ffmpeg,
     hwH264: [hw.nvenc && 'nvenc', hw.qsv && 'qsv', hw.amf && 'amf'].filter(Boolean),
     hwHevc8k: [hw.nvencHevc && 'nvenc', hw.qsvHevc && 'qsv', hw.amfHevc && 'amf'].filter(Boolean),
+    aiTier: !!(process.env.RUNPOD_API_KEY && process.env.RUNPOD_ENDPOINT_ID && process.env.PUBLIC_BASE_URL),
   };
 }
 

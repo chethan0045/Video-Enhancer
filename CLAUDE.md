@@ -26,7 +26,7 @@ cd frontend && npm test    # Angular/Karma unit tests (ng test)
 cd frontend && npm run build   # ng build --configuration production → frontend/dist/browser
 ```
 
-There is no backend test suite and no linter configured. Python engine has no runner script of its own — it is always invoked by the backend worker (`python run_pipeline.py --input ... --output ... --job-id ... --config '{json}'`).
+There is no backend test suite and no linter configured. The subtitle tool shells out to `python-engine/transcribe.py` (faster-whisper); the GPU AI tier is a separate RunPod image under `runpod/`.
 
 Config lives in `backend/.env` (copy from `backend/.env.example`). All external services are optional; leaving `MONGODB_URI` / `REDIS_HOST` unset is the intended zero-setup path.
 
@@ -42,20 +42,28 @@ Almost every external dependency has a built-in fallback, chosen at runtime. Whe
 - **Models** (`backend/src/models/index.js`, `models/VideoJob.js`): `User`, `VideoJob`, `AIModel` are plain objects wrapping `db.getCollection`, *not* raw Mongoose models — they work identically against MongoDB or NeDB. `AIModel` self-seeds its catalog on first access. `VideoJob.create` deep-merges user pipeline settings over `buildDefaultPipeline()`.
 - **Queue** (`backend/src/queue/index.js`): jobs are processed **inline** by `queue/processor.js` via `setImmediate` (FFmpeg runs in spawned child processes, so the event loop stays responsive). No separate worker process is required. BullMQ/Redis is only used when `USE_QUEUE_WORKER=true` AND a `queue/worker.js` process is running; otherwise it's irrelevant.
 
-### Processing (one path: FFmpeg)
+### Processing (FFmpeg tier + optional GPU tier)
 
-All jobs run through `queue/processor.js`, branching on `VideoJob.mode`:
+All jobs run through `queue/processor.js`, dispatched by `runJob()` on `VideoJob.mode`:
 
-- **`enhance`** → `processVideo()`: an **FFmpeg filter-chain** pass (denoise via `hqdn3d`, sharpen via `cas`, color LUTs via `eq`/`colorbalance`, deband, scaling via `zscale`/`scale`). If FFmpeg is missing it falls back to `simulatePipeline()` (fakes progress, copies input). 
-- **`edit`** → `processEdit()`: trim/crop only, no enhancement filters (stream-copy when only trimming, re-encode only when cropping).
+- **`enhance`** → `processVideo()`: an **FFmpeg filter-chain** pass (denoise `hqdn3d`, sharpen `cas`, color LUTs, deband, scaling `zscale`/`scale`). If FFmpeg is missing it falls back to `simulatePipeline()`. When `pipeline.engine === 'ai'`, routes instead to `processAiEnhance()` (see GPU tier below).
+- **`edit`** → `processEdit()`: trim/crop only (stream-copy when only trimming, re-encode only when cropping).
+- **`merge`** → `processMerge()`: normalizes each clip to a common canvas (from the first clip, ≤1080) + fps + audio, then concatenates.
+- **`extract-audio`** → `processExtractAudio()`: audio track → mp3/m4a/wav.
+- **`subtitle`** → `processSubtitle()`: 16k mono wav → `python-engine/transcribe.py` (faster-whisper, CPU) → `.srt`. Fails clearly if faster-whisper isn't installed.
 
-`queue/worker.js` exists for the optional BullMQ path and calls the same two functions — behaviour is identical whether or not a dedicated worker is used.
+Stage sets per mode come from `stagesForMode()` in `models/VideoJob.js`. `queue/worker.js` (optional BullMQ path) calls the same `runJob` dispatcher, so behaviour is identical with or without a worker.
+
+### GPU AI tier (Phase 2 — RunPod serverless)
+
+`processAiEnhance()` dispatches to a **RunPod serverless GPU endpoint** (`backend/src/services/runpod.js`) running real **Real-ESRGAN + GFPGAN** (`runpod/handler.py`, deployed from `runpod/Dockerfile`). Render passes a public `/uploads` URL (`PUBLIC_BASE_URL`); the worker returns the result as base64 or an S3 URL. If `RUNPOD_API_KEY`/`RUNPOD_ENDPOINT_ID`/`PUBLIC_BASE_URL` aren't set, or the GPU job fails, it **falls back to the FFmpeg tier automatically**. The frontend Enhance page offers a Fast vs AI engine toggle (`pipeline.engine`). Status: built, unverified without a GPU/RunPod endpoint — see `runpod/README.md`.
 
 **Encoder selection is hardware-adaptive** (`pickHwEncoder`/`buildEncoderArgs`): probes NVENC/QSV/AMF at startup (via `-f null -`, not `-y nul` which fails on Windows), uses H.264 hardware for ≤4K and HEVC hardware for 8K, and falls back to `libx264` (CPU, segmented in parallel for long videos) where there's no capable GPU — e.g. the live server. The same build runs everywhere, as fast as the host allows.
 
-### Python AI engine (`python-engine/`) — currently unused
+### Python (`python-engine/`)
 
-`run_pipeline.py` orchestrates a 12-stage frame-by-frame pipeline, but it is **not wired into the running app** (enhancement uses the FFmpeg path above). Its modules are **OpenCV placeholders, not real AI** — `upscale.py` is explicitly "Simulated Real-ESRGAN"; the named models (Real-ESRGAN, CodeFormer, etc.) are aspirational (README "Fallback active"). It also requires `opencv-python`/`torch` which are not installed. Treat it as dead/reference code unless real model weights + deps are added.
+- `transcribe.py` — **used** by the subtitle tool (faster-whisper, CPU). Needs `pip install faster-whisper` on the host (listed in `requirements.txt`).
+- `run_pipeline.py` + `modules/` — legacy enhancement pipeline, **not wired into the app**. OpenCV placeholders, not real models ("Simulated Real-ESRGAN"). Real AI now lives in `runpod/` (GPU tier), not here. Treat `run_pipeline.py`/`modules/` as dead/reference code.
 
 ### Progress / realtime (`backend/src/websocket/index.js`)
 

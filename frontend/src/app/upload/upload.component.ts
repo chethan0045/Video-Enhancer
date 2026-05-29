@@ -41,6 +41,20 @@ import { JobService } from '../core/job.service';
         <div class="settings-panel" *ngIf="selectedFile">
           <h3>Enhancement Settings</h3>
 
+          <div class="engine-toggle">
+            <button type="button" class="engine-opt" [class.active]="settings.engine === 'fast'" (click)="settings.engine = 'fast'">
+              <strong>⚡ Fast</strong>
+              <span>FFmpeg, hardware-accelerated. Instant, runs anywhere.</span>
+            </button>
+            <button type="button" class="engine-opt" [class.active]="settings.engine === 'ai'" (click)="settings.engine = 'ai'">
+              <strong>🧠 AI (GPU)</strong>
+              <span>Real-ESRGAN + face restoration. Best quality; needs the GPU endpoint.</span>
+            </button>
+          </div>
+          <p class="engine-note" *ngIf="settings.engine === 'ai'">
+            AI mode runs on the RunPod GPU worker. If it isn't configured, the job automatically falls back to Fast mode.
+          </p>
+
           <div class="settings-grid">
             <div class="setting">
               <label>Title</label>
@@ -150,6 +164,15 @@ import { JobService } from '../core/job.service';
     .file-details p { font-size: 13px; color: #8888aa; }
     .settings-panel { margin-top: 32px; }
     .settings-panel h3 { font-size: 18px; font-weight: 600; margin-bottom: 20px; }
+    .engine-toggle { display: flex; gap: 12px; margin-bottom: 8px; }
+    .engine-opt {
+      flex: 1; text-align: left; background: #14141f; border: 1px solid #2a2a3e;
+      border-radius: 12px; padding: 14px 16px; cursor: pointer; transition: all 0.2s; color: #aaaacc;
+    }
+    .engine-opt strong { display: block; font-size: 14px; color: white; margin-bottom: 4px; }
+    .engine-opt span { font-size: 12px; line-height: 1.4; }
+    .engine-opt.active { border-color: #e94560; background: #1e1018; }
+    .engine-note { font-size: 12px; color: #8888aa; margin: 0 0 16px; }
     .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .setting { display: flex; flex-direction: column; gap: 6px; }
     .setting.full { grid-column: 1 / -1; }
@@ -186,7 +209,8 @@ export class UploadComponent {
   processing = false;
   title = '';
 
-  settings = {
+  settings: any = {
+    engine: 'fast',
     denoise: { enabled: true, strength: 0.5 },
     deblur: { enabled: true, strength: 0.5 },
     upscale: { enabled: true, target: '8k', model: 'Real-ESRGAN' },
