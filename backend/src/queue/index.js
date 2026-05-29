@@ -51,12 +51,17 @@ try {
 
 const memoryEmitter = new EventEmitter();
 const memoryJobs = new Map();
-const { processVideo, processEdit } = require('./processor');
+const { runJob } = require('./processor');
 
 exports.addJob = async (job) => {
   const jobId = job._id.toString();
-  const mode = job.mode === 'edit' ? 'edit' : 'enhance';
-  const run = mode === 'edit' ? processEdit : processVideo;
+  const data = {
+    jobId,
+    inputPath: job.inputPath,
+    inputPaths: job.inputPaths,
+    pipeline: job.pipeline,
+    mode: job.mode || 'enhance',
+  };
 
   // Process inline with the FFmpeg pipeline (hardware-accelerated, fast, runs on any GPU
   // and falls back to CPU). FFmpeg work happens in spawned child processes, so the API/
@@ -64,14 +69,12 @@ exports.addJob = async (job) => {
   // is the same path the live server uses. BullMQ/Redis is optional and only enqueued when
   // a dedicated worker is explicitly enabled via USE_QUEUE_WORKER=true.
   if (process.env.USE_QUEUE_WORKER === 'true' && useBull && queue) {
-    return queue.add('process-video', {
-      jobId, userId: job.userId.toString(), inputPath: job.inputPath, pipeline: job.pipeline, mode,
-    }, { jobId, priority: 1 });
+    return queue.add('process-video', { ...data, userId: job.userId.toString() }, { jobId, priority: 1 });
   }
 
-  memoryJobs.set(jobId, { jobId, inputPath: job.inputPath, pipeline: job.pipeline, mode });
+  memoryJobs.set(jobId, data);
   setImmediate(() => {
-    run(jobId, job.inputPath, { pipeline: job.pipeline }).catch((err) => {
+    runJob(data).catch((err) => {
       console.error(`[Queue] Job ${jobId} failed:`, err.message);
       VideoJob.updateById(jobId, { $set: { status: 'failed', error: err.message } }).catch(() => {});
     });

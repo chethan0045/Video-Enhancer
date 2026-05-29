@@ -75,9 +75,7 @@ import { JobService, VideoJob } from '../core/job.service';
           </button>
           <button *ngIf="job.status === 'failed'" class="btn-primary" (click)="retry()">Retry</button>
           <button *ngIf="isProcessing() || job.status === 'queued'" class="btn-ghost" (click)="cancel()">Cancel</button>
-          <button *ngIf="isFinished()" class="btn-ghost" [routerLink]="job.mode === 'edit' ? '/editor' : '/upload'">
-            {{ job.mode === 'edit' ? 'New Edit' : 'New Enhancement' }}
-          </button>
+          <button *ngIf="isFinished()" class="btn-ghost" [routerLink]="newRoute()">{{ newLabel() }}</button>
         </div>
 
         <div class="error-box" *ngIf="job.error">
@@ -184,15 +182,31 @@ export class ProcessingComponent implements OnInit, OnDestroy {
 
   getStatusText(): string {
     if (!this.job) return '';
-    const isEdit = this.job.mode === 'edit';
+    const mode = this.job.mode || 'enhance';
+    const processingLabel: Record<string, string> = {
+      enhance: 'AI Processing', edit: 'Editing video', merge: 'Merging clips',
+      'extract-audio': 'Extracting audio', subtitle: 'Transcribing audio',
+    };
+    const doneLabel: Record<string, string> = {
+      enhance: '✓ Enhancement complete', edit: '✓ Edit complete', merge: '✓ Merge complete',
+      'extract-audio': '✓ Audio extracted', subtitle: '✓ Subtitles ready',
+    };
     const map: Record<string, string> = {
       queued: 'Waiting in queue', extracting: 'Extracting frames',
-      processing: isEdit ? 'Editing video' : 'AI Processing',
+      processing: processingLabel[mode] || 'Processing',
       enhancing: 'AI Enhancement', rebuilding: 'Rebuilding video', exporting: 'Exporting',
-      completed: isEdit ? '✓ Edit complete' : '✓ Enhancement complete',
+      completed: doneLabel[mode] || '✓ Complete',
       failed: 'Processing failed', cancelled: 'Cancelled',
     };
     return map[this.job.status] || this.job.status;
+  }
+
+  newRoute(): string {
+    return ({ edit: '/editor', merge: '/merge', 'extract-audio': '/extract-audio', subtitle: '/subtitles' } as any)[this.job?.mode || 'enhance'] || '/upload';
+  }
+
+  newLabel(): string {
+    return ({ edit: 'New Edit', merge: 'New Merge', 'extract-audio': 'Extract Another', subtitle: 'New Subtitles' } as any)[this.job?.mode || 'enhance'] || 'New Enhancement';
   }
 
   formatStageName(name: string): string {

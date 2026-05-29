@@ -517,6 +517,194 @@ async function processEdit(jobId, inputPath, settings = {}) {
   console.log(`[Editor] Job ${jobId} complete`);
 }
 
+/**
+ * Extract the audio track to a standalone file (mp3 / m4a / wav).
+ */
+async function processExtractAudio(jobId, inputPath, settings = {}) {
+  const job = await VideoJob.findById(jobId);
+  if (!job) throw new Error('Job not found');
+  if (!checkFfmpeg()) throw new Error('FFmpeg not available');
+
+  const p = settings.pipeline || job.pipeline || {};
+  const fmt = String(p.audioFormat || 'mp3').toLowerCase();
+  const ext = fmt === 'wav' ? 'wav' : (fmt === 'aac' || fmt === 'm4a' ? 'm4a' : 'mp3');
+
+  const info = getVideoInfo(inputPath);
+  if (!info.audioCodec) throw new Error('This video has no audio track to extract');
+
+  const outputDir = path.join(__dirname, '..', 'outputs', jobId);
+  fs.mkdirSync(outputDir, { recursive: true });
+  const outputAudio = path.join(outputDir, `audio.${ext}`);
+
+  await setStageStatus(jobId, 'extract', 'processing', 0);
+  await VideoJob.updateById(jobId, { $set: { status: 'processing', progress: 5 } });
+  emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: 5 });
+
+  const codec = ext === 'wav' ? ['-c:a', 'pcm_s16le']
+    : ext === 'm4a' ? ['-c:a', 'aac', '-b:a', '192k']
+      : ['-c:a', 'libmp3lame', '-q:a', '2'];
+  await runFFmpeg(['-y', '-i', inputPath, '-vn', ...codec, outputAudio], (elapsed) => {
+    const pct = info.duration > 0 ? Math.min(95, 5 + Math.round((elapsed / info.duration) * 90)) : 50;
+    emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: pct });
+    VideoJob.updateById(jobId, { $set: { progress: pct } }).catch(() => {});
+  });
+
+  await setStageStatus(jobId, 'extract', 'completed', 100);
+  await setStageStatus(jobId, 'export', 'completed', 100);
+  await VideoJob.updateById(jobId, {
+    $set: { status: 'completed', progress: 100, completedAt: new Date(), outputPath: outputAudio, inputDuration: info.duration },
+  });
+  emitJobProgress(jobId, { userId: job.userId, status: 'completed', progress: 100 });
+  console.log(`[Audio] Job ${jobId} complete (${ext})`);
+}
+
+/**
+ * Merge multiple clips into one. Each clip is normalized to a common canvas
+ * (derived from the first clip, height ≤1080), fps and audio layout, then
+ * concatenated — so clips of differing resolutions/codecs join cleanly.
+ */
+async function processMerge(jobId, inputPaths, settings = {}) {
+  const job = await VideoJob.findById(jobId);
+  if (!job) throw new Error('Job not found');
+  const paths = (inputPaths && inputPaths.length ? inputPaths : job.inputPaths) || [];
+  if (paths.length < 2) throw new Error('Merge requires at least 2 clips');
+  if (!checkFfmpeg()) throw new Error('FFmpeg not available');
+
+  const outputDir = path.join(__dirname, '..', 'outputs', jobId);
+  const tempDir = path.join(outputDir, 'temp');
+  fs.mkdirSync(tempDir, { recursive: true });
+  const outputVideo = path.join(outputDir, 'output.mp4');
+
+  await setStageStatus(jobId, 'merge', 'processing', 0);
+  await VideoJob.updateById(jobId, { $set: { status: 'processing', progress: 3 } });
+  emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: 3 });
+
+  // Common canvas from the first clip (height capped at 1080), even dimensions.
+  const first = getVideoInfo(paths[0]);
+  const H = Math.min(1080, Math.max(2, first.height || 720)) & ~1;
+  const W = Math.max(2, Math.round((first.width || 1280) * H / (first.height || 720) / 2) * 2);
+  const fps = 30;
+
+  const normalized = [];
+  for (let i = 0; i < paths.length; i++) {
+    const info = getVideoInfo(paths[i]);
+    const hasAudio = !!info.audioCodec;
+    const normPath = path.join(tempDir, `norm_${i}.mp4`);
+    const vf = `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps}`;
+    const enc = buildEncoderArgs(canHwEncode(H), info, normPath, H);
+    const out = enc.pop();
+    const args = ['-y', '-i', paths[i]];
+    if (!hasAudio) args.push('-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000');
+    args.push('-vf', vf, ...enc, '-c:a', 'aac', '-ar', '48000', '-ac', '2');
+    if (!hasAudio) args.push('-shortest');
+    args.push(out);
+    await runFFmpeg(args);
+    normalized.push(normPath);
+    const pct = 3 + Math.round(((i + 1) / paths.length) * 80);
+    await VideoJob.updateById(jobId, { $set: { progress: pct } });
+    emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: pct });
+  }
+
+  await setStageStatus(jobId, 'merge', 'completed', 100);
+  await setStageStatus(jobId, 'export', 'processing', 0);
+
+  const listFile = path.join(tempDir, 'concat.txt');
+  fs.writeFileSync(listFile, normalized.map(f => `file '${f.replace(/\\/g, '/')}'`).join('\n'));
+  await runFFmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', '-movflags', '+faststart', outputVideo]);
+
+  try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+  await setStageStatus(jobId, 'export', 'completed', 100);
+  const finalInfo = getVideoInfo(outputVideo);
+  await VideoJob.updateById(jobId, {
+    $set: { status: 'completed', progress: 100, completedAt: new Date(), outputPath: outputVideo, inputDuration: finalInfo.duration, inputResolution: { width: W, height: H } },
+  });
+  emitJobProgress(jobId, { userId: job.userId, status: 'completed', progress: 100 });
+  console.log(`[Merge] Job ${jobId} complete (${paths.length} clips → ${W}x${H})`);
+}
+
+/**
+ * Generate subtitles (.srt) via faster-whisper (CPU). Extracts 16k mono audio,
+ * then runs python-engine/transcribe.py. Fails clearly if Python/faster-whisper
+ * isn't installed (no silent success).
+ */
+function runWhisper(wavPath, srtPath, settings, jobId, job) {
+  return new Promise((resolve) => {
+    const pythonPath = process.env.PYTHON_PATH || 'python';
+    const script = path.join(__dirname, '..', '..', '..', 'python-engine', 'transcribe.py');
+    if (!fs.existsSync(script)) return resolve(false);
+    const model = settings.whisperModel || process.env.WHISPER_MODEL || 'tiny';
+    const lang = settings.language || 'auto';
+    const proc = spawn(pythonPath, [script, '--input', wavPath, '--output', srtPath, '--model', model, '--language', lang],
+      { windowsHide: true, env: { ...process.env, PYTHONUNBUFFERED: '1' } });
+    let stderr = '';
+    proc.stdout.on('data', (d) => {
+      const m = d.toString().match(/PROGRESS (\d+)/);
+      if (m) {
+        const pct = Math.min(95, 30 + Math.round(parseInt(m[1]) * 0.6));
+        emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: pct });
+        VideoJob.updateById(jobId, { $set: { progress: pct } }).catch(() => {});
+      }
+    });
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('error', () => resolve(false));
+    proc.on('close', (code) => {
+      if (code === 0 && fs.existsSync(srtPath)) return resolve(true);
+      console.warn(`[Subtitle] whisper exit ${code}: ${stderr.slice(-300)}`);
+      resolve(false);
+    });
+  });
+}
+
+async function processSubtitle(jobId, inputPath, settings = {}) {
+  const job = await VideoJob.findById(jobId);
+  if (!job) throw new Error('Job not found');
+  if (!checkFfmpeg()) throw new Error('FFmpeg not available');
+
+  const p = settings.pipeline || job.pipeline || {};
+  const info = getVideoInfo(inputPath);
+  if (!info.audioCodec) throw new Error('This video has no audio track to transcribe');
+
+  const outputDir = path.join(__dirname, '..', 'outputs', jobId);
+  const tempDir = path.join(outputDir, 'temp');
+  fs.mkdirSync(tempDir, { recursive: true });
+  const srtPath = path.join(outputDir, 'subtitles.srt');
+  const wavPath = path.join(tempDir, 'audio.wav');
+
+  await setStageStatus(jobId, 'extract', 'processing', 0);
+  await VideoJob.updateById(jobId, { $set: { status: 'processing', progress: 5 } });
+  emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: 5 });
+  await runFFmpeg(['-y', '-i', inputPath, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', wavPath]);
+  await setStageStatus(jobId, 'extract', 'completed', 100);
+
+  await setStageStatus(jobId, 'transcribe', 'processing', 0);
+  await VideoJob.updateById(jobId, { $set: { progress: 30 } });
+  emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: 30 });
+
+  const ok = await runWhisper(wavPath, srtPath, p, jobId, job);
+  if (!ok) throw new Error('Transcription unavailable — install Python and faster-whisper (pip install faster-whisper) on the host.');
+
+  await setStageStatus(jobId, 'transcribe', 'completed', 100);
+  await setStageStatus(jobId, 'export', 'completed', 100);
+  try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+  await VideoJob.updateById(jobId, {
+    $set: { status: 'completed', progress: 100, completedAt: new Date(), outputPath: srtPath, inputDuration: info.duration },
+  });
+  emitJobProgress(jobId, { userId: job.userId, status: 'completed', progress: 100 });
+  console.log(`[Subtitle] Job ${jobId} complete`);
+}
+
+// Single dispatch entry — routes a job to the right processor by mode.
+function runJob({ jobId, inputPath, inputPaths, pipeline, mode }) {
+  const settings = { pipeline };
+  switch (mode) {
+    case 'edit': return processEdit(jobId, inputPath, settings);
+    case 'merge': return processMerge(jobId, inputPaths, settings);
+    case 'extract-audio': return processExtractAudio(jobId, inputPath, settings);
+    case 'subtitle': return processSubtitle(jobId, inputPath, settings);
+    default: return processVideo(jobId, inputPath, settings);
+  }
+}
+
 // Report FFmpeg availability and detected hardware encoders (for /api/health diagnostics).
 function getCapabilities() {
   const ffmpeg = checkFfmpeg();
@@ -527,4 +715,4 @@ function getCapabilities() {
   };
 }
 
-module.exports = { processVideo, processEdit, getCapabilities };
+module.exports = { processVideo, processEdit, processMerge, processExtractAudio, processSubtitle, runJob, getCapabilities };

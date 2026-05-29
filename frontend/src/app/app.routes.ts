@@ -44,6 +44,26 @@ export const routes: Routes = [
       import('./editor/editor.component').then((m) => m.EditorComponent),
   },
   {
+    path: 'merge',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./merge/merge.component').then((m) => m.MergeComponent),
+  },
+  {
+    path: 'extract-audio',
+    canActivate: [authGuard],
+    data: { mode: 'extract-audio' },
+    loadComponent: () =>
+      import('./tool/tool.component').then((m) => m.ToolComponent),
+  },
+  {
+    path: 'subtitles',
+    canActivate: [authGuard],
+    data: { mode: 'subtitle' },
+    loadComponent: () =>
+      import('./tool/tool.component').then((m) => m.ToolComponent),
+  },
+  {
     path: 'editor/:id',
     canActivate: [authGuard],
     loadComponent: () =>

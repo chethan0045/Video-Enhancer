@@ -8,3 +8,4 @@ tqdm>=4.66.0
 scikit-image>=0.22.0
 ffmpeg-python>=0.2.0
 einops>=0.7.0
+faster-whisper>=1.0.0  # subtitle generation (CPU). Install on the host for the Subtitles tool.

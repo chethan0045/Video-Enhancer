@@ -1,21 +1,18 @@
 const { Worker } = require('bullmq');
-const { VideoJob } = require('../models');
 const { onJob } = require('./index');
-const { processVideo: processEnhance, processEdit } = require('./processor');
+const { runJob } = require('./processor');
 
 const REDIS_CONFIG = {
   host: process.env.REDIS_HOST || 'localhost',
   port: parseInt(process.env.REDIS_PORT || '6379'),
 };
 
-// Both modes run through the FFmpeg pipeline (hardware-accelerated, fast, GPU-agnostic).
-// This matches the inline path in queue/index.js so behaviour is identical whether or not
-// a dedicated worker is used.
-const processJob = async ({ jobId, inputPath, pipeline, mode }) => {
-  const run = mode === 'edit' ? processEdit : processEnhance;
-  console.log(`[Worker] ${mode === 'edit' ? 'Editing' : 'Enhancing'} job ${jobId}`);
-  await run(jobId, inputPath, { pipeline });
-  return { success: true, jobId };
+// All modes run through the same FFmpeg dispatch as the inline path in queue/index.js,
+// so behaviour is identical whether or not a dedicated worker is used.
+const processJob = async (data) => {
+  console.log(`[Worker] ${data.mode || 'enhance'} job ${data.jobId}`);
+  await runJob(data);
+  return { success: true, jobId: data.jobId };
 };
 
 let worker = null;

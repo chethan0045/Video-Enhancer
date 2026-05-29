@@ -1,5 +1,6 @@
 import { Component, inject, OnInit, ViewChildren, QueryList, ElementRef, AfterViewInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { HttpClient } from '@angular/common/http';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { JobService, VideoJob } from '../core/job.service';
 
@@ -18,26 +19,39 @@ import { JobService, VideoJob } from '../core/job.service';
       </header>
 
       <div class="content" *ngIf="job">
-        <div class="comparison">
-          <div class="viewer before">
-            <div class="label">Before</div>
-            <video #videoBefore [src]="getVideoUrl(job.inputPath, 'uploads')" muted playsinline preload="auto"></video>
+        <!-- Video output: before/after comparison -->
+        <ng-container *ngIf="outputKind === 'video'">
+          <div class="comparison">
+            <div class="viewer before">
+              <div class="label">Before</div>
+              <video #videoBefore [src]="getVideoUrl(job.inputPath, 'uploads')" muted playsinline preload="auto"></video>
+            </div>
+            <div class="viewer after" *ngIf="job.outputPath">
+              <div class="label after-label">{{ afterLabel() }}</div>
+              <video #videoAfter [src]="getVideoUrl(job.outputPath, 'outputs')" muted playsinline preload="auto"></video>
+            </div>
           </div>
-          <div class="viewer after" *ngIf="job.outputPath">
-            <div class="label after-label">{{ job.mode === 'edit' ? 'After — Edited' : 'After — AI Enhanced' }}</div>
-            <video #videoAfter [src]="getVideoUrl(job.outputPath, 'outputs')" muted playsinline preload="auto"></video>
+
+          <div class="playback-controls" *ngIf="job.outputPath">
+            <button class="ctrl-btn" (click)="togglePlay()">{{ playing ? '⏸ Pause' : '▶ Play' }}</button>
+            <button class="ctrl-btn" (click)="restart()">⏮ Restart</button>
+            <label class="ctrl-label">
+              <input type="range" min="0" max="100" step="0.1" [value]="progressPct" (input)="seek($event)" />
+              <span>{{ currentTime | number:'1.1-1' }}s / {{ duration | number:'1.1-1' }}s</span>
+            </label>
           </div>
+        </ng-container>
+
+        <!-- Audio output -->
+        <div class="single-result" *ngIf="outputKind === 'audio' && job.outputPath">
+          <div class="label after-label">Extracted Audio</div>
+          <audio controls [src]="getVideoUrl(job.outputPath, 'outputs')"></audio>
         </div>
 
-        <div class="playback-controls" *ngIf="job.outputPath">
-          <button class="ctrl-btn" (click)="togglePlay()">
-            {{ playing ? '⏸ Pause' : '▶ Play' }}
-          </button>
-          <button class="ctrl-btn" (click)="restart()">⏮ Restart</button>
-          <label class="ctrl-label">
-            <input type="range" min="0" max="100" step="0.1" [value]="progressPct" (input)="seek($event)" />
-            <span>{{ currentTime | number:'1.1-1' }}s / {{ duration | number:'1.1-1' }}s</span>
-          </label>
+        <!-- Subtitle output -->
+        <div class="single-result" *ngIf="outputKind === 'subtitle'">
+          <div class="label after-label">Generated Subtitles (.srt)</div>
+          <pre class="srt">{{ srtText || 'No speech detected in this audio.' }}</pre>
         </div>
 
         <div class="job-details">
@@ -101,6 +115,9 @@ import { JobService, VideoJob } from '../core/job.service';
     }
     .after-label { color: #66cc66; }
     .viewer video { width: 100%; display: block; background: #000; }
+    .single-result { background: #14141f; border: 1px solid #1e1e30; border-radius: 16px; overflow: hidden; margin-bottom: 24px; }
+    .single-result audio { width: 100%; padding: 24px; box-sizing: border-box; }
+    .srt { margin: 0; padding: 20px; max-height: 360px; overflow: auto; font-size: 13px; line-height: 1.5; color: #cccce0; white-space: pre-wrap; }
     .playback-controls {
       display: flex; align-items: center; gap: 12px; padding: 12px 16px;
       background: #14141f; border: 1px solid #1e1e30; border-radius: 12px;
@@ -138,8 +155,24 @@ import { JobService, VideoJob } from '../core/job.service';
 export class PreviewComponent implements OnInit, AfterViewInit {
   private route = inject(ActivatedRoute);
   private jobService = inject(JobService);
+  private http = inject(HttpClient);
 
   job: VideoJob | null = null;
+  srtText = '';
+
+  /** Output kind drives which result view is shown. */
+  get outputKind(): 'video' | 'audio' | 'subtitle' {
+    const p = (this.job?.outputPath || '').toLowerCase();
+    if (p.endsWith('.srt') || this.job?.mode === 'subtitle') return 'subtitle';
+    if (/\.(mp3|m4a|wav|aac|ogg)$/.test(p) || this.job?.mode === 'extract-audio') return 'audio';
+    return 'video';
+  }
+
+  afterLabel(): string {
+    return this.job?.mode === 'edit' ? 'After — Edited'
+      : this.job?.mode === 'merge' ? 'Merged Result'
+        : 'After — AI Enhanced';
+  }
 
   @ViewChildren('videoBefore, videoAfter') videos!: QueryList<ElementRef<HTMLVideoElement>>;
 
@@ -155,6 +188,10 @@ export class PreviewComponent implements OnInit, AfterViewInit {
       next: (res) => {
         this.job = res.job;
         if (this.job?.inputDuration) this.duration = this.job.inputDuration;
+        if (this.outputKind === 'subtitle' && this.job?.outputPath) {
+          this.http.get(this.getVideoUrl(this.job.outputPath, 'outputs'), { responseType: 'text' })
+            .subscribe({ next: (t) => (this.srtText = t), error: () => (this.srtText = '') });
+        }
         setTimeout(() => this.attachVideoEvents());
       },
       error: () => (this.job = null),
@@ -230,11 +267,13 @@ export class PreviewComponent implements OnInit, AfterViewInit {
   }
 
   download() {
-    if (this.job?.outputPath) {
-      const a = document.createElement('a');
-      a.href = this.getVideoUrl(this.job.outputPath, 'outputs');
-      a.download = `${this.job.title}_${this.job.mode === 'edit' ? 'edited' : 'enhanced'}.mp4`;
-      a.click();
-    }
+    if (!this.job?.outputPath) return;
+    const ext = (this.job.outputPath.match(/\.[a-z0-9]+$/i)?.[0]) || '.mp4';
+    const suffixes: Record<string, string> = { edit: 'edited', merge: 'merged', 'extract-audio': 'audio', subtitle: 'subtitles' };
+    const suffix = suffixes[this.job.mode || 'enhance'] || 'enhanced';
+    const a = document.createElement('a');
+    a.href = this.getVideoUrl(this.job.outputPath, 'outputs');
+    a.download = `${this.job.title}_${suffix}${ext}`;
+    a.click();
   }
 }

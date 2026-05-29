@@ -29,7 +29,7 @@ import { JobService, VideoJob } from '../core/job.service';
           <div class="tool-card" routerLink="/upload">
             <div class="tool-icon">✨</div>
             <h3>Enhance Video</h3>
-            <p>Upscale to clean, sharp 8K with AI denoise, deblur and color grading.</p>
+            <p>Upscale to clean, sharp 8K with denoise, deblur and color grading.</p>
             <span class="tool-cta">Enhance →</span>
           </div>
           <div class="tool-card" routerLink="/editor">
@@ -37,6 +37,24 @@ import { JobService, VideoJob } from '../core/job.service';
             <h3>Edit Video</h3>
             <p>Trim and crop your clip and export it — no enhancement applied.</p>
             <span class="tool-cta">Edit →</span>
+          </div>
+          <div class="tool-card" routerLink="/merge">
+            <div class="tool-icon">🎞️</div>
+            <h3>Merge Clips</h3>
+            <p>Join multiple videos into one; different sizes are auto-fitted.</p>
+            <span class="tool-cta">Merge →</span>
+          </div>
+          <div class="tool-card" routerLink="/extract-audio">
+            <div class="tool-icon">🎵</div>
+            <h3>Extract Audio</h3>
+            <p>Pull the audio track out as MP3, M4A or WAV.</p>
+            <span class="tool-cta">Extract →</span>
+          </div>
+          <div class="tool-card" routerLink="/subtitles">
+            <div class="tool-icon">💬</div>
+            <h3>Generate Subtitles</h3>
+            <p>Auto-transcribe speech to an .srt file with Whisper.</p>
+            <span class="tool-cta">Subtitles →</span>
           </div>
         </div>
       </div>
@@ -64,7 +82,7 @@ import { JobService, VideoJob } from '../core/job.service';
                 <span class="status-dot"></span>
                 {{ job.status }}
               </div>
-              <span class="mode-tag {{ job.mode || 'enhance' }}">{{ job.mode === 'edit' ? 'Edit' : 'Enhance' }}</span>
+              <span class="mode-tag {{ job.mode || 'enhance' }}">{{ modeLabel(job.mode) }}</span>
             </div>
             <h4>{{ job.title }}</h4>
             <div class="job-meta">
@@ -120,6 +138,9 @@ import { JobService, VideoJob } from '../core/job.service';
     .mode-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 3px 8px; border-radius: 6px; }
     .mode-tag.enhance { background: #1a1a3e; color: #8888ff; }
     .mode-tag.edit { background: #2e2410; color: #ffcc66; }
+    .mode-tag.merge { background: #102a2e; color: #66dddd; }
+    .mode-tag.extract-audio { background: #2a102e; color: #dd88ff; }
+    .mode-tag.subtitle { background: #102e1a; color: #66cc99; }
     .btn-primary {
       padding: 14px 32px; background: linear-gradient(135deg, #e94560, #ff6b6b);
       border: none; border-radius: 12px; color: white; font-size: 15px;
@@ -164,6 +185,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
   jobs: VideoJob[] = [];
   loading = true;
   private pollTimer: any = null;
+
+  modeLabel(mode?: string): string {
+    const labels: Record<string, string> = { enhance: 'Enhance', edit: 'Edit', merge: 'Merge', 'extract-audio': 'Audio', subtitle: 'Subtitles' };
+    return labels[mode || 'enhance'] || 'Enhance';
+  }
 
   ngOnInit() {
     this.loadJobs();

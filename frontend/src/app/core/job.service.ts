@@ -7,7 +7,7 @@ export interface VideoJob {
   _id: string;
   userId: string;
   title: string;
-  mode?: 'enhance' | 'edit';
+  mode?: 'enhance' | 'edit' | 'merge' | 'extract-audio' | 'subtitle';
   inputPath: string;
   outputPath?: string;
   status: string;
@@ -36,11 +36,21 @@ export class JobService {
     return this.http.get<any>(`${environment.apiUrl}/jobs/${id}`);
   }
 
-  create(title: string, settings: any, file?: File, mode: 'enhance' | 'edit' = 'enhance'): Observable<{ job: VideoJob }> {
+  create(title: string, settings: any, file?: File, mode: string = 'enhance'): Observable<{ job: VideoJob }> {
     const formData = new FormData();
     formData.append('video', file!);
     formData.append('title', title);
     formData.append('mode', mode);
+    formData.append('settings', JSON.stringify(settings));
+    return this.http.post<any>(`${environment.apiUrl}/jobs`, formData);
+  }
+
+  // Merge takes an ordered list of clips under the 'videos' field.
+  createMerge(title: string, files: File[], settings: any = {}): Observable<{ job: VideoJob }> {
+    const formData = new FormData();
+    files.forEach(f => formData.append('videos', f));
+    formData.append('title', title);
+    formData.append('mode', 'merge');
     formData.append('settings', JSON.stringify(settings));
     return this.http.post<any>(`${environment.apiUrl}/jobs`, formData);
   }

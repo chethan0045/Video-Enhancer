@@ -13,8 +13,9 @@ const stageSchema = new mongoose.Schema({
 const schema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   title: { type: String, required: true, trim: true },
-  mode: { type: String, enum: ['enhance', 'edit'], default: 'enhance', index: true },
+  mode: { type: String, enum: ['enhance', 'edit', 'merge', 'extract-audio', 'subtitle'], default: 'enhance', index: true },
   inputPath: { type: String, required: true },
+  inputPaths: [String], // for merge jobs (ordered list of source clips)
   inputFormat: String,
   inputSize: Number,
   inputDuration: Number,
@@ -108,4 +109,22 @@ function defaultEditStages() {
   ].map(s => ({ ...s, status: 'pending', progress: 0 }));
 }
 
-module.exports = { VideoJobModel, schema, buildDefaultPipeline, defaultStages, defaultEditStages };
+// Stage sets for the other Phase-1 editor tools.
+function mkStages(names) {
+  return names.map(name => ({ name, status: 'pending', progress: 0 }));
+}
+
+// Returns the appropriate stage list for a given job mode.
+function stagesForMode(mode) {
+  switch (mode) {
+    case 'edit': return defaultEditStages();
+    case 'merge': return mkStages(['merge', 'export']);
+    case 'extract-audio': return mkStages(['extract', 'export']);
+    case 'subtitle': return mkStages(['extract', 'transcribe', 'export']);
+    default: return defaultStages();
+  }
+}
+
+const JOB_MODES = ['enhance', 'edit', 'merge', 'extract-audio', 'subtitle'];
+
+module.exports = { VideoJobModel, schema, buildDefaultPipeline, defaultStages, defaultEditStages, stagesForMode, JOB_MODES };

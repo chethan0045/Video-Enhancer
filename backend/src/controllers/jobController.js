@@ -1,28 +1,41 @@
 const { VideoJob } = require('../models');
 const { addJob } = require('../queue');
 
+const { JOB_MODES } = require('../models/VideoJob');
+
 exports.createJob = async (req, res) => {
   try {
     const title = req.body.title;
     let settings = {};
     try { settings = JSON.parse(req.body.settings || '{}'); } catch { }
 
-    const inputPath = req.file ? req.file.path : req.body.inputPath;
-    if (!inputPath) return res.status(400).json({ error: 'No input video provided' });
+    const mode = JOB_MODES.includes(req.body.mode) ? req.body.mode : 'enhance';
 
-    if (req.file && !req.file.mimetype.startsWith('video/')) {
-      return res.status(400).json({ error: 'File must be a video' });
+    // multer.fields → req.files = { video: [..], videos: [..] }
+    const singleFile = req.files?.video?.[0];
+    const multiFiles = req.files?.videos || [];
+
+    let inputPath, inputPaths;
+    if (mode === 'merge') {
+      inputPaths = multiFiles.map(f => f.path);
+      if (inputPaths.length < 2) return res.status(400).json({ error: 'Merge requires at least 2 videos' });
+      inputPath = inputPaths[0]; // satisfies required field / used as the "before" reference
+    } else {
+      inputPath = singleFile ? singleFile.path : req.body.inputPath;
+      if (!inputPath) return res.status(400).json({ error: 'No input video provided' });
+      if (singleFile && !singleFile.mimetype.startsWith('video/')) {
+        return res.status(400).json({ error: 'File must be a video' });
+      }
     }
-
-    const mode = req.body.mode === 'edit' ? 'edit' : 'enhance';
 
     const job = await VideoJob.create({
       userId: req.user.id,
       title: title || 'Untitled',
       mode,
       inputPath,
-      inputSize: req.file?.size,
-      inputFormat: req.file?.mimetype,
+      inputPaths,
+      inputSize: singleFile?.size,
+      inputFormat: singleFile?.mimetype,
       pipeline: settings.pipeline || settings,
     });
 

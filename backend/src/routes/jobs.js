@@ -26,7 +26,8 @@ const upload = multer({
 });
 
 router.get('/', auth, jobController.listJobs);
-router.post('/', auth, upload.single('video'), jobController.createJob);
+// Accept a single 'video' (most modes) or multiple 'videos' (merge).
+router.post('/', auth, upload.fields([{ name: 'video', maxCount: 1 }, { name: 'videos', maxCount: 20 }]), jobController.createJob);
 router.get('/:id', auth, jobController.getJob);
 router.put('/:id/cancel', auth, jobController.cancelJob);
 router.put('/:id/pipeline', auth, jobController.updatePipeline);
