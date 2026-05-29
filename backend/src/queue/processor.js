@@ -273,17 +273,12 @@ async function processVideo(jobId, inputPath, settings = {}) {
   }
 
   if (doUpscale) {
-    if (targetH >= 2160) {
-      // zscale needs an explicit width (it doesn't support scale's -2 auto-size), so compute
-      // the aspect-preserving width rounded to an even number. Otherwise the source width is
-      // kept and the output comes out vertically stretched.
-      const upW = Math.max(2, Math.round((srcW * targetH) / srcH / 2) * 2);
-      filters.push(`zscale=w=${upW}:h=${targetH}:filter=spline36:out_range=limited`);
-      // Smooth out banding in skies/gradients from aggressive upscaling — keeps 8K output clean.
-      filters.push('deband=range=16:blur=true');
-    } else {
-      filters.push(`scale=-2:${targetH}:flags=lanczos`);
-    }
+    // Scaler choice is the dominant CPU cost when upscaling. At 8K (33MP/frame),
+    // spline36/lanczos + deband are punishingly slow, so use bicubic there; lanczos
+    // for 4K and below where it's affordable. (deband removed — denoise already keeps
+    // the image clean, and deband at 8K roughly doubled encode time.)
+    const flags = targetH >= 4320 ? 'bicubic' : 'lanczos';
+    filters.push(`scale=-2:${targetH}:flags=${flags}`);
   }
 
   if (p.editor?.crop?.enabled && (p.editor.crop.width || 0) > 0) {
