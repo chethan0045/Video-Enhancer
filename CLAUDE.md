@@ -50,7 +50,7 @@ All jobs run through `queue/processor.js`, dispatched by `runJob()` on `VideoJob
 - **`edit`** → `processEdit()`: trim/crop only (stream-copy when only trimming, re-encode only when cropping).
 - **`merge`** → `processMerge()`: normalizes each clip to a common canvas (from the first clip, ≤1080) + fps + audio, then concatenates.
 - **`extract-audio`** → `processExtractAudio()`: audio track → mp3/m4a/wav.
-- **`subtitle`** → `processSubtitle()`: 16k mono wav → `python-engine/transcribe.py` (faster-whisper, CPU) → `.srt`. Fails clearly if faster-whisper isn't installed.
+- **`subtitle`** → `processSubtitle()`: 16k mono PCM → `services/transcribe.js` (Whisper via Transformers.js / onnxruntime-node — **pure Node, no Python**) → `.srt`. First run downloads the model (`Xenova/whisper-tiny|base|small`).
 
 Stage sets per mode come from `stagesForMode()` in `models/VideoJob.js`. `queue/worker.js` (optional BullMQ path) calls the same `runJob` dispatcher, so behaviour is identical with or without a worker.
 
@@ -60,10 +60,9 @@ Stage sets per mode come from `stagesForMode()` in `models/VideoJob.js`. `queue/
 
 **Encoder selection is hardware-adaptive** (`pickHwEncoder`/`buildEncoderArgs`): probes NVENC/QSV/AMF at startup (via `-f null -`, not `-y nul` which fails on Windows), uses H.264 hardware for ≤4K and HEVC hardware for 8K, and falls back to `libx264` (CPU, segmented in parallel for long videos) where there's no capable GPU — e.g. the live server. The same build runs everywhere, as fast as the host allows.
 
-### Python (`python-engine/`)
+### Python (`python-engine/`) — not used by the app
 
-- `transcribe.py` — **used** by the subtitle tool (faster-whisper, CPU). Needs `pip install faster-whisper` on the host (listed in `requirements.txt`).
-- `run_pipeline.py` + `modules/` — legacy enhancement pipeline, **not wired into the app**. OpenCV placeholders, not real models ("Simulated Real-ESRGAN"). Real AI now lives in `runpod/` (GPU tier), not here. Treat `run_pipeline.py`/`modules/` as dead/reference code.
+Subtitles now transcribe in pure Node (`services/transcribe.js`), so **no Python is required** anywhere in the running app. `python-engine/` (`run_pipeline.py`, `transcribe.py`, `modules/`) is legacy/reference only — OpenCV placeholders, not real models. Real AI lives in `runpod/` (GPU tier).
 
 ### Progress / realtime (`backend/src/websocket/index.js`)
 

@@ -629,38 +629,10 @@ async function processMerge(jobId, inputPaths, settings = {}) {
 }
 
 /**
- * Generate subtitles (.srt) via faster-whisper (CPU). Extracts 16k mono audio,
- * then runs python-engine/transcribe.py. Fails clearly if Python/faster-whisper
- * isn't installed (no silent success).
+ * Generate subtitles (.srt) in pure Node via Transformers.js (Whisper on
+ * onnxruntime) — no Python dependency, so it runs on any Node host incl. Render.
+ * Extracts 16 kHz mono PCM with FFmpeg, then transcribes.
  */
-function runWhisper(wavPath, srtPath, settings, jobId, job) {
-  return new Promise((resolve) => {
-    const pythonPath = process.env.PYTHON_PATH || 'python';
-    const script = path.join(__dirname, '..', '..', '..', 'python-engine', 'transcribe.py');
-    if (!fs.existsSync(script)) return resolve(false);
-    const model = settings.whisperModel || process.env.WHISPER_MODEL || 'tiny';
-    const lang = settings.language || 'auto';
-    const proc = spawn(pythonPath, [script, '--input', wavPath, '--output', srtPath, '--model', model, '--language', lang],
-      { windowsHide: true, env: { ...process.env, PYTHONUNBUFFERED: '1' } });
-    let stderr = '';
-    proc.stdout.on('data', (d) => {
-      const m = d.toString().match(/PROGRESS (\d+)/);
-      if (m) {
-        const pct = Math.min(95, 30 + Math.round(parseInt(m[1]) * 0.6));
-        emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: pct });
-        VideoJob.updateById(jobId, { $set: { progress: pct } }).catch(() => {});
-      }
-    });
-    proc.stderr.on('data', (d) => { stderr += d.toString(); });
-    proc.on('error', () => resolve(false));
-    proc.on('close', (code) => {
-      if (code === 0 && fs.existsSync(srtPath)) return resolve(true);
-      console.warn(`[Subtitle] whisper exit ${code}: ${stderr.slice(-300)}`);
-      resolve(false);
-    });
-  });
-}
-
 async function processSubtitle(jobId, inputPath, settings = {}) {
   const job = await VideoJob.findById(jobId);
   if (!job) throw new Error('Job not found');
@@ -674,21 +646,35 @@ async function processSubtitle(jobId, inputPath, settings = {}) {
   const tempDir = path.join(outputDir, 'temp');
   fs.mkdirSync(tempDir, { recursive: true });
   const srtPath = path.join(outputDir, 'subtitles.srt');
-  const wavPath = path.join(tempDir, 'audio.wav');
+  const pcmPath = path.join(tempDir, 'audio.f32le');
 
   await setStageStatus(jobId, 'extract', 'processing', 0);
   await VideoJob.updateById(jobId, { $set: { status: 'processing', progress: 5 } });
   emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: 5 });
-  await runFFmpeg(['-y', '-i', inputPath, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', wavPath]);
+  // 16 kHz mono 32-bit float PCM — the format Whisper expects.
+  await runFFmpeg(['-y', '-i', inputPath, '-vn', '-ac', '1', '-ar', '16000', '-f', 'f32le', pcmPath]);
   await setStageStatus(jobId, 'extract', 'completed', 100);
 
   await setStageStatus(jobId, 'transcribe', 'processing', 0);
-  await VideoJob.updateById(jobId, { $set: { progress: 30 } });
-  emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: 30 });
+  await VideoJob.updateById(jobId, { $set: { progress: 35 } });
+  emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: 35 });
 
-  const ok = await runWhisper(wavPath, srtPath, p, jobId, job);
-  if (!ok) throw new Error('Transcription unavailable — install Python and faster-whisper (pip install faster-whisper) on the host.');
+  const buf = fs.readFileSync(pcmPath);
+  const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  const pcm = new Float32Array(ab);
 
+  const modelMap = { tiny: 'Xenova/whisper-tiny', base: 'Xenova/whisper-base', small: 'Xenova/whisper-small' };
+  const model = modelMap[p.whisperModel] || process.env.WHISPER_MODEL || 'Xenova/whisper-tiny';
+
+  let srt;
+  try {
+    const { transcribeToSrt } = require('../services/transcribe');
+    srt = await transcribeToSrt(pcm, { model, language: p.language || 'auto' });
+  } catch (e) {
+    throw new Error('Subtitle transcription failed: ' + e.message);
+  }
+
+  fs.writeFileSync(srtPath, srt || '');
   await setStageStatus(jobId, 'transcribe', 'completed', 100);
   await setStageStatus(jobId, 'export', 'completed', 100);
   try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
@@ -696,7 +682,7 @@ async function processSubtitle(jobId, inputPath, settings = {}) {
     $set: { status: 'completed', progress: 100, completedAt: new Date(), outputPath: srtPath, inputDuration: info.duration },
   });
   emitJobProgress(jobId, { userId: job.userId, status: 'completed', progress: 100 });
-  console.log(`[Subtitle] Job ${jobId} complete`);
+  console.log(`[Subtitle] Job ${jobId} complete (${model})`);
 }
 
 /**

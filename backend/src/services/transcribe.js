@@ -1,0 +1,52 @@
+/**
+ * Pure-Node speech-to-text via Transformers.js (Whisper on onnxruntime-node).
+ * No Python required — runs on any Node host, including Render. Replaces the
+ * old python-engine/transcribe.py path for the subtitle tool.
+ */
+let asrPromise = null;
+
+async function getAsr(model) {
+  if (!asrPromise) {
+    const { pipeline, env } = await import('@huggingface/transformers');
+    env.allowLocalModels = false; // pull the model from the HF hub (cached after first use)
+    asrPromise = pipeline('automatic-speech-recognition', model);
+  }
+  return asrPromise;
+}
+
+function srtTime(t) {
+  if (!isFinite(t) || t < 0) t = 0;
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = Math.floor(t % 60);
+  const ms = Math.round((t - Math.floor(t)) * 1000);
+  const p = (n, w = 2) => String(n).padStart(w, '0');
+  return `${p(h)}:${p(m)}:${p(s)},${p(ms, 3)}`;
+}
+
+function chunksToSrt(chunks) {
+  let out = '', i = 1;
+  for (const c of chunks) {
+    const text = (c.text || '').trim();
+    if (!text) continue;
+    const start = (c.timestamp && c.timestamp[0] != null) ? c.timestamp[0] : 0;
+    const end = (c.timestamp && c.timestamp[1] != null) ? c.timestamp[1] : start + 2;
+    out += `${i++}\n${srtTime(start)} --> ${srtTime(end)}\n${text}\n\n`;
+  }
+  return out;
+}
+
+/**
+ * @param {Float32Array} pcm  16 kHz mono samples
+ * @returns {Promise<string>} SRT text (may be empty if no speech)
+ */
+async function transcribeToSrt(pcm, { model = 'Xenova/whisper-tiny', language = 'auto' } = {}) {
+  const asr = await getAsr(model);
+  const opts = { chunk_length_s: 30, stride_length_s: 5, return_timestamps: true };
+  if (language && language !== 'auto') opts.language = language;
+  const result = await asr(pcm, opts);
+  const chunks = (result.chunks && result.chunks.length)
+    ? result.chunks
+    : (result.text ? [{ timestamp: [0, null], text: result.text }] : []);
+  return chunksToSrt(chunks);
+}
+
+module.exports = { transcribeToSrt };
