@@ -30,7 +30,10 @@ let hw = {
 
 function probeEncoder(name) {
   try {
-    execSync(`ffmpeg -f lavfi -i color=s=1280x720:d=0.5 -c:v ${name} -b:v 1M -y nul`, { windowsHide: true, stdio: 'pipe' });
+    // Use the null muxer (`-f null -`), NOT `-y nul`: on Windows ffmpeg can't infer a
+    // format from the filename "nul" and fails for every encoder — which previously meant
+    // hardware acceleration was never detected and everything fell back to software.
+    execSync(`ffmpeg -f lavfi -i color=s=1280x720:d=0.5 -c:v ${name} -b:v 1M -f null -`, { windowsHide: true, stdio: 'pipe' });
     return true;
   } catch { return false; }
 }
@@ -249,11 +252,17 @@ async function processVideo(jobId, inputPath, settings = {}) {
   }
 
   if (doUpscale) {
-    filters.push(targetH >= 2160
-      ? `zscale=h=${targetH}:filter=spline36:out_range=limited`
-      : `scale=-2:${targetH}:flags=lanczos`);
-    // Smooth out banding in skies/gradients introduced by aggressive upscaling — keeps 8K output clean.
-    if (targetH >= 2160) filters.push('deband=range=16:blur=true');
+    if (targetH >= 2160) {
+      // zscale needs an explicit width (it doesn't support scale's -2 auto-size), so compute
+      // the aspect-preserving width rounded to an even number. Otherwise the source width is
+      // kept and the output comes out vertically stretched.
+      const upW = Math.max(2, Math.round((srcW * targetH) / srcH / 2) * 2);
+      filters.push(`zscale=w=${upW}:h=${targetH}:filter=spline36:out_range=limited`);
+      // Smooth out banding in skies/gradients from aggressive upscaling — keeps 8K output clean.
+      filters.push('deband=range=16:blur=true');
+    } else {
+      filters.push(`scale=-2:${targetH}:flags=lanczos`);
+    }
   }
 
   if (p.editor?.crop?.enabled && (p.editor.crop.width || 0) > 0) {
@@ -267,6 +276,7 @@ async function processVideo(jobId, inputPath, settings = {}) {
   // Use hardware whenever this host can encode the target res (H.264 ≤4K, HEVC for 8K).
   // Falls back to software automatically where there's no capable GPU (e.g. the live server).
   const useHW = canHwEncode(targetH);
+  const encLabel = useHW ? (pickHwEncoder(targetH) || 'HW') : 'libx264';
   const longVideo = info.duration > 180;
 
   // CPU-parallel segmenting only helps the software path; a hardware encoder is
@@ -318,13 +328,13 @@ async function processVideo(jobId, inputPath, settings = {}) {
     const encodeArgs = ['-y', '-i', workingInput, ...vfArgs, ...buildEncoderArgs(useHW, info, interimVideo, targetH)];
 
     const startTime = Date.now();
-    console.log(`[Processor] ${useHW ? 'NVENC' : 'SW'} encode, ${filters.length} filters`);
+    console.log(`[Processor] ${encLabel} encode, ${filters.length} filters`);
     await runFFmpeg(encodeArgs, (elapsed) => {
       const pct = info.duration > 0 ? Math.min(90, 5 + Math.round((elapsed / info.duration) * 85)) : 50;
       emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: pct });
       VideoJob.updateById(jobId, { $set: { progress: pct } }).catch(() => {});
     });
-    console.log(`[Processor] Encode done in ${((Date.now() - startTime) / 1000).toFixed(1)}s (${useHW ? 'NVENC' : 'SW'})`);
+    console.log(`[Processor] Encode done in ${((Date.now() - startTime) / 1000).toFixed(1)}s (${encLabel})`);
 
     await VideoJob.updateById(jobId, { $set: { progress: 92 } });
     await setStage('export', 'processing', 0);
