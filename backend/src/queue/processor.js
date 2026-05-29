@@ -38,6 +38,20 @@ function resolveBinaries() {
 const { ffmpeg: FFMPEG, ffprobe: FFPROBE } = resolveBinaries();
 console.log(`[Processor] ffmpeg=${FFMPEG === 'ffmpeg' ? 'system PATH' : FFMPEG}`);
 
+// Detect the container's real memory limit (cgroup) so we can degrade safely on small
+// hosts (e.g. Render free tier, 512MB) instead of OOM-crashing on heavy jobs.
+function detectMemLimitMB() {
+  if (process.env.LOW_MEMORY_MODE === 'true') return 512;
+  if (process.env.LOW_MEMORY_MODE === 'false') return 1 << 20;
+  try { const v = fs.readFileSync('/sys/fs/cgroup/memory.max', 'utf8').trim(); if (v && v !== 'max') return Math.round(parseInt(v, 10) / 1048576); } catch {}
+  try { const n = parseInt(fs.readFileSync('/sys/fs/cgroup/memory/memory.limit_in_bytes', 'utf8').trim(), 10); if (n && n < 9e18) return Math.round(n / 1048576); } catch {}
+  return Math.round(os.totalmem() / 1048576);
+}
+const MEM_MB = detectMemLimitMB();
+const LOW_MEM = MEM_MB < 1024;
+const SW_THREADS = LOW_MEM ? ['-threads', '2'] : [];
+console.log(`[Processor] memory≈${MEM_MB}MB${LOW_MEM ? ' (LOW — capping resolution/threads, subtitles disabled)' : ''}`);
+
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 let ffmpegChecked = false, ffmpegAvailable = false;
@@ -166,7 +180,7 @@ function buildEncoderArgs(useHW, info, outputPath, targetH = 2160) {
       // Software x264 (no GPU, e.g. live). Fast presets — this path has no hardware help,
       // so favour speed; quality stays good for a "fast tier".
       const ultraHD = targetH >= 2160;
-      return ['-c:v', 'libx264',
+      return ['-c:v', 'libx264', ...SW_THREADS,
         '-preset', ultraHD ? 'ultrafast' : 'veryfast',
         '-crf', '21',
         '-tune', 'film', ...tail];
@@ -203,9 +217,10 @@ async function processVideo(jobId, inputPath, settings = {}) {
   // encoded on the CPU — 8K is impractically slow there. Cap the target so the "fast" tier
   // stays fast; true 8K belongs on the GPU/AI tier. Override with FFMPEG_SW_MAX_HEIGHT.
   const hwAvailable = hw.nvenc || hw.qsv || hw.amf || hw.nvencHevc || hw.qsvHevc || hw.amfHevc;
-  const swMax = parseInt(process.env.FFMPEG_SW_MAX_HEIGHT || '1440', 10);
+  let swMax = parseInt(process.env.FFMPEG_SW_MAX_HEIGHT || '1440', 10);
+  if (LOW_MEM) swMax = Math.min(swMax, 720); // keep memory in check on tiny hosts
   if (!hwAvailable && targetH > swMax) {
-    console.log(`[Processor] No HW encoder — capping ${targetH}p -> ${swMax}p for speed (set FFMPEG_SW_MAX_HEIGHT to change)`);
+    console.log(`[Processor] No HW encoder — capping ${targetH}p -> ${swMax}p for speed/memory`);
     targetH = swMax;
   }
   const doUpscale = upscale.enabled !== false && targetH > srcH && targetH <= 4320;
@@ -637,6 +652,7 @@ async function processSubtitle(jobId, inputPath, settings = {}) {
   const job = await VideoJob.findById(jobId);
   if (!job) throw new Error('Job not found');
   if (!checkFfmpeg()) throw new Error('FFmpeg not available');
+  if (LOW_MEM) throw new Error(`Subtitle generation needs ~1GB+ RAM (this host has ≈${MEM_MB}MB). Use a larger instance or run subtitles on the GPU tier.`);
 
   const p = settings.pipeline || job.pipeline || {};
   const info = getVideoInfo(inputPath);
@@ -873,7 +889,8 @@ async function processStudio(jobId, inputPath, settings = {}) {
   // Enhance target resolution (capped on software-only hosts).
   let targetH = { '1080p': 1080, '2k': 1440, '4k': 2160, '8k': 4320 }[enh.target] || 0;
   const hwAvailable = hw.nvenc || hw.qsv || hw.amf || hw.nvencHevc || hw.qsvHevc || hw.amfHevc;
-  const swMax = parseInt(process.env.FFMPEG_SW_MAX_HEIGHT || '1440', 10);
+  let swMax = parseInt(process.env.FFMPEG_SW_MAX_HEIGHT || '1440', 10);
+  if (LOW_MEM) swMax = Math.min(swMax, 720);
   if (!hwAvailable && targetH > swMax) targetH = swMax;
 
   const ts = parseFloat(trim.start) || 0, te = parseFloat(trim.end) || 0;
@@ -907,7 +924,9 @@ async function processStudio(jobId, inputPath, settings = {}) {
   await setStageStatus(jobId, 'edit', 'completed', 100);
   await setStageStatus(jobId, 'enhance', 'processing', 0);
 
-  const wantSubs = !!subs.enabled;
+  // On tiny hosts, skip the memory-heavy Whisper step so the export still succeeds.
+  if (subs.enabled && LOW_MEM) console.warn(`[Studio] Low memory (≈${MEM_MB}MB) — skipping subtitles for this export`);
+  const wantSubs = !!subs.enabled && !LOW_MEM;
   const pass1 = wantSubs ? path.join(tempDir, 'pass1.mp4') : finalVideo;
   const enc = buildEncoderArgs(canHwEncode(targetH || srcH), info, pass1, targetH || srcH);
   const out = enc.pop();
@@ -997,6 +1016,8 @@ function getCapabilities() {
     hwH264: [hw.nvenc && 'nvenc', hw.qsv && 'qsv', hw.amf && 'amf'].filter(Boolean),
     hwHevc8k: [hw.nvencHevc && 'nvenc', hw.qsvHevc && 'qsv', hw.amfHevc && 'amf'].filter(Boolean),
     aiTier: !!(process.env.RUNPOD_API_KEY && process.env.RUNPOD_ENDPOINT_ID && process.env.PUBLIC_BASE_URL),
+    memoryMB: MEM_MB,
+    lowMemory: LOW_MEM,
   };
 }
 
