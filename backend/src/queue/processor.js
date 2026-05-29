@@ -163,10 +163,12 @@ function buildEncoderArgs(useHW, info, outputPath, targetH = 2160) {
       return ['-c:v', 'hevc_amf', '-quality', 'quality', '-rc', 'vbr_latency',
         '-b:v', `${bk}k`, '-maxrate', `${Math.round(bk * 1.5)}k`, ...hevcTail];
     default: {
-      const ultraHD = targetH >= 4320;
+      // Software x264 (no GPU, e.g. live). Fast presets — this path has no hardware help,
+      // so favour speed; quality stays good for a "fast tier".
+      const ultraHD = targetH >= 2160;
       return ['-c:v', 'libx264',
-        '-preset', ultraHD ? 'veryfast' : 'fast',
-        '-crf', ultraHD ? '20' : '18',
+        '-preset', ultraHD ? 'ultrafast' : 'veryfast',
+        '-crf', '21',
         '-tune', 'film', ...tail];
     }
   }
@@ -196,7 +198,16 @@ async function processVideo(jobId, inputPath, settings = {}) {
   const is4K = srcH >= 2160;
   console.log(`[Processor] ${srcW}x${srcH} @ ${info.fps.toFixed(2)}fps, ${info.duration.toFixed(1)}s (${info.codec})`);
 
-  const targetH = { '1080p': 1080, '2k': 1440, '4k': 2160, '8k': 4320 }[upscale.target] || 2160;
+  let targetH = { '1080p': 1080, '2k': 1440, '4k': 2160, '8k': 4320 }[upscale.target] || 2160;
+  // On a host with no hardware encoder (e.g. the live server), every pixel is scaled AND
+  // encoded on the CPU — 8K is impractically slow there. Cap the target so the "fast" tier
+  // stays fast; true 8K belongs on the GPU/AI tier. Override with FFMPEG_SW_MAX_HEIGHT.
+  const hwAvailable = hw.nvenc || hw.qsv || hw.amf || hw.nvencHevc || hw.qsvHevc || hw.amfHevc;
+  const swMax = parseInt(process.env.FFMPEG_SW_MAX_HEIGHT || '1440', 10);
+  if (!hwAvailable && targetH > swMax) {
+    console.log(`[Processor] No HW encoder — capping ${targetH}p -> ${swMax}p for speed (set FFMPEG_SW_MAX_HEIGHT to change)`);
+    targetH = swMax;
+  }
   const doUpscale = upscale.enabled !== false && targetH > srcH && targetH <= 4320;
 
   const outputVideo = path.join(outputDir, 'output.mp4');
