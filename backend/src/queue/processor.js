@@ -722,7 +722,7 @@ async function processAiEnhance(jobId, inputPath, settings = {}) {
       pipeline: {
         upscale: { enabled: p.upscale?.enabled !== false, scale: 4 },
         faceRestore: { enabled: p.faceRestore?.enabled !== false, weight: p.faceRestore?.strength ?? 0.5 },
-        fps: 30,
+        fpsInterpolation: { enabled: !!p.fpsInterpolation?.enabled, targetFps: p.fpsInterpolation?.targetFps || 60 },
       },
     }, (st) => {
       const pct = st === 'IN_PROGRESS' ? 60 : st === 'IN_QUEUE' ? 20 : 40;

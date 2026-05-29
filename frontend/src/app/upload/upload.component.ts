@@ -100,7 +100,7 @@ import { JobService } from '../core/job.service';
             <div class="setting checkbox">
               <label>
                 <input type="checkbox" [(ngModel)]="settings.fpsInterpolation.enabled" />
-                Frame Interpolation (60 FPS)
+                Frame Interpolation → 60 FPS (RIFE, AI mode only)
               </label>
             </div>
 

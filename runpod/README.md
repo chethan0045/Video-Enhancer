@@ -46,6 +46,17 @@ Expect JSON with `output_base64` (short clips) or `output_url` (if S3 configured
 - For large outputs set `S3_BUCKET`/`S3_ENDPOINT`/`S3_ACCESS_KEY`/`S3_SECRET_KEY`/`S3_PUBLIC_BASE`
   on the endpoint and pass `"output":{"mode":"s3"}`; the handler uploads and returns a URL.
 
-## Not yet included (next Phase 2 increments)
-- **RIFE** frame interpolation (24→60fps) — add the model + a `fps` stage in `process_frames`.
-- **Background noise removal** — can run on the CPU/FFmpeg tier (`afftdn`), no GPU needed.
+## RIFE frame interpolation (24→60fps)
+Included via the vendored [Practical-RIFE](https://github.com/hzwer/Practical-RIFE). The repo is
+cloned in the image; the **model weights are on Google Drive**, so bake them in at build time:
+```bash
+docker build --build-arg RIFE_MODEL_GDRIVE_ID=<drive-file-id> -t <img> .
+```
+Get the current model id from the Practical-RIFE README. If omitted, the build still succeeds and
+RIFE is **skipped at runtime** (the job returns the upscaled video at source fps) until a `train_log/`
+model exists in `/app/Practical-RIFE`. Triggered by `pipeline.fpsInterpolation.enabled` (the
+"Frame Interpolation" checkbox on the Enhance page, AI mode). **Unverified** — the RIFE flags
+(`--multi`/`--fps`/`--output`) vary by version and may need adjusting in `handler.py:run_rife()`.
+
+## Done on the CPU tier (no GPU)
+- **Background noise removal** runs on the FFmpeg tier (`afftdn`) as its own tool — see the app's "Remove Noise".
