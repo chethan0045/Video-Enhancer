@@ -82,9 +82,9 @@ function checkFfmpeg() {
   return ffmpegAvailable;
 }
 
-async function runFFmpeg(args, onProgress) {
+async function runFFmpeg(args, onProgress, opts = {}) {
   return new Promise((resolve, reject) => {
-    const proc = spawn(FFMPEG, args, { windowsHide: true });
+    const proc = spawn(FFMPEG, args, { windowsHide: true, cwd: opts.cwd });
     let stderr = '';
     proc.stderr.on('data', (data) => {
       stderr += data.toString();
@@ -676,13 +676,49 @@ async function processSubtitle(jobId, inputPath, settings = {}) {
 
   fs.writeFileSync(srtPath, srt || '');
   await setStageStatus(jobId, 'transcribe', 'completed', 100);
+
+  // Output mode: 'srt' (file), 'burn' (hardcoded captions, default) or 'embed' (soft track).
+  const outMode = p.subtitleOutput || 'burn';
+  const hasVideo = (info.width || 0) > 0 && (info.height || 0) > 0;
+  const hasCaptions = !!(srt && srt.trim());
+  let outputPath = srtPath;
+
+  if (outMode !== 'srt' && hasVideo) {
+    await setStageStatus(jobId, 'export', 'processing', 0);
+    const outVideo = path.join(outputDir, 'output.mp4');
+    if (outMode === 'embed' && hasCaptions) {
+      // Soft subtitle track — toggleable in players that support it.
+      await runFFmpeg(['-y', '-i', inputPath, '-i', srtPath, '-map', '0', '-map', '1',
+        '-c', 'copy', '-c:s', 'mov_text', '-metadata:s:s:0', 'language=und', '-movflags', '+faststart', outVideo]);
+      outputPath = outVideo;
+    } else {
+      // Burn-in (hardcoded) — captions rendered onto the pixels, visible everywhere.
+      // cwd = outputDir so the subtitles filter gets a bare filename (no Windows path escaping).
+      const style = "force_style='Fontsize=22,PrimaryColour=&H00FFFFFF&,OutlineColour=&H90000000&,BorderStyle=3,Outline=1,Shadow=0,MarginV=28'";
+      const enc = buildEncoderArgs(canHwEncode(info.height), info, outVideo, info.height);
+      const out = enc.pop();
+      await runFFmpeg(['-y', '-i', inputPath, '-vf', `subtitles=subtitles.srt:${style}`, ...enc, '-c:a', 'copy', out],
+        (elapsed) => {
+          const pct = info.duration > 0 ? Math.min(95, 60 + Math.round((elapsed / info.duration) * 35)) : 80;
+          emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: pct });
+          VideoJob.updateById(jobId, { $set: { progress: pct } }).catch(() => {});
+        }, { cwd: outputDir });
+      outputPath = outVideo;
+    }
+  }
+
   await setStageStatus(jobId, 'export', 'completed', 100);
+  // keep subtitles.srt alongside the video (don't wipe outputDir); only clear temp
   try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
   await VideoJob.updateById(jobId, {
-    $set: { status: 'completed', progress: 100, completedAt: new Date(), outputPath: srtPath, inputDuration: info.duration },
+    $set: {
+      status: 'completed', progress: 100, completedAt: new Date(), outputPath,
+      inputDuration: info.duration,
+      ...(hasVideo && outputPath.endsWith('.mp4') ? { inputResolution: { width: info.width, height: info.height } } : {}),
+    },
   });
   emitJobProgress(jobId, { userId: job.userId, status: 'completed', progress: 100 });
-  console.log(`[Subtitle] Job ${jobId} complete (${model})`);
+  console.log(`[Subtitle] Job ${jobId} complete (${model}, ${outMode})`);
 }
 
 /**

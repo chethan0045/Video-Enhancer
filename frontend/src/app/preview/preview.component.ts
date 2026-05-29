@@ -160,11 +160,11 @@ export class PreviewComponent implements OnInit, AfterViewInit {
   job: VideoJob | null = null;
   srtText = '';
 
-  /** Output kind drives which result view is shown. */
+  /** Output kind drives which result view is shown — based on the actual output file. */
   get outputKind(): 'video' | 'audio' | 'subtitle' {
     const p = (this.job?.outputPath || '').toLowerCase();
-    if (p.endsWith('.srt') || this.job?.mode === 'subtitle') return 'subtitle';
-    if (/\.(mp3|m4a|wav|aac|ogg)$/.test(p) || this.job?.mode === 'extract-audio') return 'audio';
+    if (p.endsWith('.srt')) return 'subtitle';
+    if (/\.(mp3|m4a|wav|aac|ogg)$/.test(p)) return 'audio';
     return 'video';
   }
 
@@ -172,7 +172,8 @@ export class PreviewComponent implements OnInit, AfterViewInit {
     return this.job?.mode === 'edit' ? 'After — Edited'
       : this.job?.mode === 'merge' ? 'Merged Result'
         : this.job?.mode === 'denoise-audio' ? 'After — Noise Removed'
-          : 'After — AI Enhanced';
+          : this.job?.mode === 'subtitle' ? 'After — Subtitled'
+            : 'After — AI Enhanced';
   }
 
   @ViewChildren('videoBefore, videoAfter') videos!: QueryList<ElementRef<HTMLVideoElement>>;

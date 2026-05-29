@@ -70,6 +70,14 @@ type ToolMode = 'extract-audio' | 'subtitle' | 'denoise-audio';
                 <option value="ta">Tamil</option>
               </select>
             </div>
+            <div class="setting">
+              <label>Output</label>
+              <select [(ngModel)]="subtitleOutput">
+                <option value="burn">Burn into video (always visible)</option>
+                <option value="embed">Embed as toggleable track</option>
+                <option value="srt">Subtitle file (.srt) only</option>
+              </select>
+            </div>
           </ng-container>
 
           <div class="setting" *ngIf="mode === 'denoise-audio'">
@@ -123,13 +131,14 @@ export class ToolComponent implements OnInit {
   audioFormat = 'mp3';
   whisperModel = 'tiny';
   language = 'auto';
+  subtitleOutput = 'burn';
   noiseStrength = 0.6;
 
   private metaByMode: Record<ToolMode, any> = {
     'extract-audio': { title: 'Extract Audio', icon: '🎵', drop: 'Drop a video to extract its audio',
       hint: 'Pulls the audio track out as MP3, M4A or WAV.', cta: 'Extract Audio →' },
-    'subtitle': { title: 'Generate Subtitles', icon: '💬', drop: 'Drop a video to transcribe',
-      hint: 'Generates an .srt subtitle file from speech using Whisper.', cta: 'Generate Subtitles →' },
+    'subtitle': { title: 'Auto Subtitles', icon: '💬', drop: 'Drop a video to subtitle',
+      hint: 'Transcribes speech with Whisper and adds the captions to your video (or exports an .srt).', cta: 'Add Subtitles →' },
     'denoise-audio': { title: 'Remove Background Noise', icon: '🔇', drop: 'Drop a video to clean its audio',
       hint: 'Removes hiss, hum and background noise from the audio track.', cta: 'Remove Noise →' },
   };
@@ -159,7 +168,7 @@ export class ToolComponent implements OnInit {
     this.processing = true;
     const pipelineByMode: Record<ToolMode, any> = {
       'extract-audio': { audioFormat: this.audioFormat },
-      'subtitle': { whisperModel: this.whisperModel, language: this.language },
+      'subtitle': { whisperModel: this.whisperModel, language: this.language, subtitleOutput: this.subtitleOutput },
       'denoise-audio': { noiseStrength: this.noiseStrength },
     };
     const settings = { pipeline: pipelineByMode[this.mode] };
