@@ -3,7 +3,8 @@
  * Used only when RUNPOD_API_KEY + RUNPOD_ENDPOINT_ID are set; the caller falls
  * back to the FFmpeg tier otherwise.
  */
-const API = 'https://api.runpod.ai/v2';
+// Override the base for testing against a mock; defaults to the real RunPod API.
+const API = process.env.RUNPOD_API_BASE || 'https://api.runpod.ai/v2';
 
 function configured() {
   return !!(process.env.RUNPOD_API_KEY && process.env.RUNPOD_ENDPOINT_ID);

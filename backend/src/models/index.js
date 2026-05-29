@@ -89,6 +89,11 @@ const VideoJob = {
     for (const key of Object.keys(defaults)) {
       pipeline[key] = { ...defaults[key], ...(userPipe[key] || {}) };
     }
+    // Preserve extra top-level pipeline fields the defaults don't know about
+    // (engine, audioFormat, noiseStrength, whisperModel, language, …).
+    for (const key of Object.keys(userPipe)) {
+      if (!(key in pipeline)) pipeline[key] = userPipe[key];
+    }
     return col.create({
       ...data,
       mode,
