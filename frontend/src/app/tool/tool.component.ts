@@ -5,7 +5,7 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { JobService } from '../core/job.service';
 
-type ToolMode = 'extract-audio' | 'subtitle';
+type ToolMode = 'extract-audio' | 'subtitle' | 'denoise-audio';
 
 @Component({
   selector: 'app-tool',
@@ -72,6 +72,11 @@ type ToolMode = 'extract-audio' | 'subtitle';
             </div>
           </ng-container>
 
+          <div class="setting" *ngIf="mode === 'denoise-audio'">
+            <label>Noise reduction strength — {{ noiseStrength }}</label>
+            <input type="range" min="0" max="1" step="0.1" [(ngModel)]="noiseStrength" />
+          </div>
+
           <button class="btn-primary" (click)="start()" [disabled]="processing">
             {{ processing ? 'Creating Job...' : meta.cta }}
           </button>
@@ -118,12 +123,15 @@ export class ToolComponent implements OnInit {
   audioFormat = 'mp3';
   whisperModel = 'tiny';
   language = 'auto';
+  noiseStrength = 0.6;
 
   private metaByMode: Record<ToolMode, any> = {
     'extract-audio': { title: 'Extract Audio', icon: '🎵', drop: 'Drop a video to extract its audio',
       hint: 'Pulls the audio track out as MP3, M4A or WAV.', cta: 'Extract Audio →' },
     'subtitle': { title: 'Generate Subtitles', icon: '💬', drop: 'Drop a video to transcribe',
       hint: 'Generates an .srt subtitle file from speech using Whisper.', cta: 'Generate Subtitles →' },
+    'denoise-audio': { title: 'Remove Background Noise', icon: '🔇', drop: 'Drop a video to clean its audio',
+      hint: 'Removes hiss, hum and background noise from the audio track.', cta: 'Remove Noise →' },
   };
   get meta() { return this.metaByMode[this.mode]; }
 
@@ -149,9 +157,12 @@ export class ToolComponent implements OnInit {
   async start() {
     if (!this.file || this.processing) return;
     this.processing = true;
-    const settings = this.mode === 'extract-audio'
-      ? { pipeline: { audioFormat: this.audioFormat } }
-      : { pipeline: { whisperModel: this.whisperModel, language: this.language } };
+    const pipelineByMode: Record<ToolMode, any> = {
+      'extract-audio': { audioFormat: this.audioFormat },
+      'subtitle': { whisperModel: this.whisperModel, language: this.language },
+      'denoise-audio': { noiseStrength: this.noiseStrength },
+    };
+    const settings = { pipeline: pipelineByMode[this.mode] };
     try {
       const res = await firstValueFrom(this.jobService.create(this.title || 'Untitled', settings, this.file, this.mode));
       if (res?.job?._id) this.router.navigate(['/processing', res.job._id]);

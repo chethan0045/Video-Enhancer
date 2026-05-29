@@ -56,6 +56,12 @@ import { JobService, VideoJob } from '../core/job.service';
             <p>Auto-transcribe speech to an .srt file with Whisper.</p>
             <span class="tool-cta">Subtitles →</span>
           </div>
+          <div class="tool-card" routerLink="/denoise-audio">
+            <div class="tool-icon">🔇</div>
+            <h3>Remove Noise</h3>
+            <p>Clean hiss, hum and background noise from the audio.</p>
+            <span class="tool-cta">Clean Audio →</span>
+          </div>
         </div>
       </div>
 
@@ -141,6 +147,7 @@ import { JobService, VideoJob } from '../core/job.service';
     .mode-tag.merge { background: #102a2e; color: #66dddd; }
     .mode-tag.extract-audio { background: #2a102e; color: #dd88ff; }
     .mode-tag.subtitle { background: #102e1a; color: #66cc99; }
+    .mode-tag.denoise-audio { background: #2e2218; color: #ddaa77; }
     .btn-primary {
       padding: 14px 32px; background: linear-gradient(135deg, #e94560, #ff6b6b);
       border: none; border-radius: 12px; color: white; font-size: 15px;
@@ -187,7 +194,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   private pollTimer: any = null;
 
   modeLabel(mode?: string): string {
-    const labels: Record<string, string> = { enhance: 'Enhance', edit: 'Edit', merge: 'Merge', 'extract-audio': 'Audio', subtitle: 'Subtitles' };
+    const labels: Record<string, string> = { enhance: 'Enhance', edit: 'Edit', merge: 'Merge', 'extract-audio': 'Audio', subtitle: 'Subtitles', 'denoise-audio': 'Denoise' };
     return labels[mode || 'enhance'] || 'Enhance';
   }
 

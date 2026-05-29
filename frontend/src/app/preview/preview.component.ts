@@ -171,7 +171,8 @@ export class PreviewComponent implements OnInit, AfterViewInit {
   afterLabel(): string {
     return this.job?.mode === 'edit' ? 'After — Edited'
       : this.job?.mode === 'merge' ? 'Merged Result'
-        : 'After — AI Enhanced';
+        : this.job?.mode === 'denoise-audio' ? 'After — Noise Removed'
+          : 'After — AI Enhanced';
   }
 
   @ViewChildren('videoBefore, videoAfter') videos!: QueryList<ElementRef<HTMLVideoElement>>;

@@ -762,6 +762,61 @@ async function processAiEnhance(jobId, inputPath, settings = {}) {
   console.log(`[AI] Job ${jobId} complete via RunPod GPU`);
 }
 
+/**
+ * Background noise removal — cleans the audio track with FFmpeg's afftdn
+ * denoiser (+ a high-pass to cut rumble). CPU-only, no GPU. Outputs the video
+ * with cleaned audio (video stream copied), or a cleaned audio file if the
+ * input has no video.
+ */
+async function processDenoiseAudio(jobId, inputPath, settings = {}) {
+  const job = await VideoJob.findById(jobId);
+  if (!job) throw new Error('Job not found');
+  if (!checkFfmpeg()) throw new Error('FFmpeg not available');
+
+  const p = settings.pipeline || job.pipeline || {};
+  const info = getVideoInfo(inputPath);
+  if (!info.audioCodec) throw new Error('This file has no audio track to clean');
+
+  const strength = Math.min(1, Math.max(0, parseFloat(p.noiseStrength ?? 0.6)));
+  const nr = Math.round(6 + strength * 30); // noise reduction 6..36 dB
+  const af = `highpass=f=85,afftdn=nr=${nr}:nf=-30`;
+  const hasVideo = (info.width || 0) > 0 && (info.height || 0) > 0;
+
+  const outputDir = path.join(__dirname, '..', 'outputs', jobId);
+  fs.mkdirSync(outputDir, { recursive: true });
+
+  await setStageStatus(jobId, 'clean', 'processing', 0);
+  await VideoJob.updateById(jobId, { $set: { status: 'processing', progress: 5 } });
+  emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: 5 });
+
+  let outputPath, args;
+  if (hasVideo) {
+    outputPath = path.join(outputDir, 'output.mp4');
+    args = ['-y', '-i', inputPath, '-af', af, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', outputPath];
+  } else {
+    outputPath = path.join(outputDir, 'audio.mp3');
+    args = ['-y', '-i', inputPath, '-vn', '-af', af, '-c:a', 'libmp3lame', '-q:a', '2', outputPath];
+  }
+
+  await runFFmpeg(args, (elapsed) => {
+    const pct = info.duration > 0 ? Math.min(95, 5 + Math.round((elapsed / info.duration) * 90)) : 50;
+    emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: pct });
+    VideoJob.updateById(jobId, { $set: { progress: pct } }).catch(() => {});
+  });
+
+  await setStageStatus(jobId, 'clean', 'completed', 100);
+  await setStageStatus(jobId, 'export', 'completed', 100);
+  await VideoJob.updateById(jobId, {
+    $set: {
+      status: 'completed', progress: 100, completedAt: new Date(), outputPath,
+      inputDuration: info.duration,
+      ...(hasVideo ? { inputResolution: { width: info.width, height: info.height } } : {}),
+    },
+  });
+  emitJobProgress(jobId, { userId: job.userId, status: 'completed', progress: 100 });
+  console.log(`[NoiseRemoval] Job ${jobId} complete (nr=${nr}dB)`);
+}
+
 // Single dispatch entry — routes a job to the right processor by mode.
 function runJob({ jobId, inputPath, inputPaths, pipeline, mode }) {
   const settings = { pipeline };
@@ -770,6 +825,7 @@ function runJob({ jobId, inputPath, inputPaths, pipeline, mode }) {
     case 'merge': return processMerge(jobId, inputPaths, settings);
     case 'extract-audio': return processExtractAudio(jobId, inputPath, settings);
     case 'subtitle': return processSubtitle(jobId, inputPath, settings);
+    case 'denoise-audio': return processDenoiseAudio(jobId, inputPath, settings);
     default:
       // 'enhance' — AI (GPU) tier when requested, else the fast FFmpeg tier.
       if (pipeline?.engine === 'ai') return processAiEnhance(jobId, inputPath, settings);

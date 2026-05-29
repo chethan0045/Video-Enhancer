@@ -64,6 +64,13 @@ export const routes: Routes = [
       import('./tool/tool.component').then((m) => m.ToolComponent),
   },
   {
+    path: 'denoise-audio',
+    canActivate: [authGuard],
+    data: { mode: 'denoise-audio' },
+    loadComponent: () =>
+      import('./tool/tool.component').then((m) => m.ToolComponent),
+  },
+  {
     path: 'editor/:id',
     canActivate: [authGuard],
     loadComponent: () =>

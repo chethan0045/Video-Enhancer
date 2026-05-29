@@ -7,7 +7,7 @@ export interface VideoJob {
   _id: string;
   userId: string;
   title: string;
-  mode?: 'enhance' | 'edit' | 'merge' | 'extract-audio' | 'subtitle';
+  mode?: 'enhance' | 'edit' | 'merge' | 'extract-audio' | 'subtitle' | 'denoise-audio';
   inputPath: string;
   outputPath?: string;
   status: string;
