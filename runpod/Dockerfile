@@ -13,7 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Torch first, from the CUDA 11.8 index.
 RUN pip install --no-cache-dir torch==2.0.1 torchvision==0.15.2 --index-url https://download.pytorch.org/whl/cu118
 
-COPY requirements.txt /app/requirements.txt
+# Paths are relative to the REPOSITORY ROOT (RunPod's GitHub build uses repo root as
+# the build context). Build locally the same way: `docker build -f runpod/Dockerfile .`
+COPY runpod/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # Pre-download model weights into the image so cold starts don't re-fetch them.
@@ -37,7 +39,7 @@ RUN if [ -n "$RIFE_MODEL_GDRIVE_ID" ]; then \
     else echo "No RIFE model id provided — RIFE will be skipped until train_log/ is added"; fi
 ENV RIFE_DIR=/app/Practical-RIFE
 
-COPY handler.py /app/handler.py
+COPY runpod/handler.py /app/handler.py
 WORKDIR /app
 
 CMD ["python", "-u", "handler.py"]

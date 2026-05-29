@@ -8,19 +8,20 @@ FFmpeg tier on Render remains the fast/free tier and the automatic fallback.
 > dev machine and Render don't have. Build the image, deploy it as a RunPod
 > serverless endpoint, set the env vars on Render, then run the test below.
 
-## 1. Build & push the image
-```bash
-cd runpod
-docker build -t <your-dockerhub>/cineremaster-gpu:latest .
-docker push <your-dockerhub>/cineremaster-gpu:latest
-```
-(The image bakes in the model weights, so first cold start is slower but then cached.)
+## 1. Create the endpoint — RunPod GitHub build (no local Docker)
+- RunPod → **Serverless → New Endpoint → Import Git Repository** → connect GitHub → pick `Video-Enhancer`.
+- **Dockerfile path:** `runpod/Dockerfile`. **Build context:** repository **root** (the default — the
+  Dockerfile's `COPY` paths are written relative to the repo root).
+- (Optional, RIFE) add build arg `RIFE_MODEL_GDRIVE_ID=<id>`.
+- GPU: a 16GB card (RTX A4000/4090) handles 1080p→4K. Container disk ≥ 15GB. Set **Max workers**.
+- Note the **Endpoint ID** and create a RunPod **API key** (Settings → API Keys).
 
-## 2. Create the RunPod serverless endpoint
-- RunPod → Serverless → New Endpoint → use the pushed image.
-- GPU: a 16GB card (e.g. RTX A4000/4090) is plenty for 1080p→4K.
-- Container disk ≥ 15GB (weights + frames). Set **Max workers** to your concurrency.
-- Note the **Endpoint ID** and create a RunPod **API key**.
+### Alt: build locally with Docker (context = repo root, not the runpod/ folder)
+```bash
+docker build -f runpod/Dockerfile -t <registry>/cineremaster-gpu:latest .
+docker push <registry>/cineremaster-gpu:latest
+```
+(The image bakes in the Real-ESRGAN/GFPGAN weights, so the first cold start is slower, then cached.)
 
 ## 3. Point Render at it
 Set on the Render service (and locally in `backend/.env` to test against RunPod):
