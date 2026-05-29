@@ -923,6 +923,12 @@ async function processStudio(jobId, inputPath, settings = {}) {
   if (enh.enabled && targetH && targetH > baseH) {
     vf.push(`scale=-2:${targetH}:flags=${targetH >= 4320 ? 'bicubic' : 'lanczos'}`);
   }
+  // Contrast-adaptive sharpening recovers crispness/detail after denoise+upscale — the
+  // biggest perceived "quality" lever without a GPU model. Applied after scaling.
+  if (enh.enabled) {
+    const sharp = Math.min(1, Math.max(0, parseFloat(enh.sharpen ?? 0.4)));
+    if (sharp > 0) vf.push(`cas=${sharp.toFixed(2)}`);
+  }
   if (rotate === 90) vf.push('transpose=1');
   else if (rotate === 270) vf.push('transpose=2');
   else if (rotate === 180) vf.push('transpose=2,transpose=2');
