@@ -41,10 +41,13 @@ app.use('/api/upload', uploadRoutes);
 
 app.get('/api/health', (_, res) => {
   const dbState = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+  let media = { ffmpeg: false };
+  try { media = require('./queue/processor').getCapabilities(); } catch (e) { media = { ffmpeg: false, error: e.message }; }
   res.json({
     status: 'ok',
     db: dbState[require('mongoose').connection.readyState] || 'nedb-fallback',
     storage: 'filesystem',
+    media,
     timestamp: new Date().toISOString(),
   });
 });

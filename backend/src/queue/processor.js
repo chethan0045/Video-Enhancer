@@ -496,4 +496,14 @@ async function processEdit(jobId, inputPath, settings = {}) {
   console.log(`[Editor] Job ${jobId} complete`);
 }
 
-module.exports = { processVideo, processEdit };
+// Report FFmpeg availability and detected hardware encoders (for /api/health diagnostics).
+function getCapabilities() {
+  const ffmpeg = checkFfmpeg();
+  return {
+    ffmpeg,
+    hwH264: [hw.nvenc && 'nvenc', hw.qsv && 'qsv', hw.amf && 'amf'].filter(Boolean),
+    hwHevc8k: [hw.nvencHevc && 'nvenc', hw.qsvHevc && 'qsv', hw.amfHevc && 'amf'].filter(Boolean),
+  };
+}
+
+module.exports = { processVideo, processEdit, getCapabilities };
