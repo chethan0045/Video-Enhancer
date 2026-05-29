@@ -40,20 +40,22 @@ Almost every external dependency has a built-in fallback, chosen at runtime. Whe
 
 - **Database** (`backend/src/db.js`): Mongoose/MongoDB if `MONGODB_URI` connects within 3s, else a **custom NeDB file-based adapter** that reimplements a subset of Mongo query operators (`$or`, `$and`, `$ne`, `$gt`, `$in`, `$regex`, …), sort/skip/limit, and update operators. Data files land in `backend/data/*.db`. `getCollection(name, schema)` returns either a Mongoose model or a `NeDBCollection`.
 - **Models** (`backend/src/models/index.js`, `models/VideoJob.js`): `User`, `VideoJob`, `AIModel` are plain objects wrapping `db.getCollection`, *not* raw Mongoose models — they work identically against MongoDB or NeDB. `AIModel` self-seeds its catalog on first access. `VideoJob.create` deep-merges user pipeline settings over `buildDefaultPipeline()`.
-- **Queue** (`backend/src/queue/index.js`): BullMQ if Redis ≥5 is reachable, else an in-process path that calls the processor via `setImmediate`.
+- **Queue** (`backend/src/queue/index.js`): jobs are processed **inline** by `queue/processor.js` via `setImmediate` (FFmpeg runs in spawned child processes, so the event loop stays responsive). No separate worker process is required. BullMQ/Redis is only used when `USE_QUEUE_WORKER=true` AND a `queue/worker.js` process is running; otherwise it's irrelevant.
 
-### Two divergent processing implementations (important)
+### Processing (one path: FFmpeg)
 
-The actual enhancement code differs depending on whether Redis/BullMQ is active — they are **not** the same pipeline:
+All jobs run through `queue/processor.js`, branching on `VideoJob.mode`:
 
-1. **In-memory fallback (default, no Redis):** `queue/index.js` → `queue/processor.js`. This runs an **FFmpeg filter-chain** pass entirely inside Node (denoise via `hqdn3d`, sharpen via `cas`, color LUTs via `eq`/`colorbalance`, scaling via `zscale`/`scale`, etc.), with NVENC/QSV/AMF hardware-encode detection and parallel-segment encoding for long videos. If FFmpeg itself is missing, it falls back again to `simulatePipeline()` (fakes progress, copies input to output). **The Python engine never runs on this path.**
-2. **BullMQ worker (`queue/worker.js`):** spawns the **Python engine** (`python-engine/run_pipeline.py`) as a child process, parsing newline-delimited JSON progress from its stdout.
+- **`enhance`** → `processVideo()`: an **FFmpeg filter-chain** pass (denoise via `hqdn3d`, sharpen via `cas`, color LUTs via `eq`/`colorbalance`, deband, scaling via `zscale`/`scale`). If FFmpeg is missing it falls back to `simulatePipeline()` (fakes progress, copies input). 
+- **`edit`** → `processEdit()`: trim/crop only, no enhancement filters (stream-copy when only trimming, re-encode only when cropping).
 
-So `python-engine/` only executes when Redis is configured and the worker is running. Most local development exercises path #1.
+`queue/worker.js` exists for the optional BullMQ path and calls the same two functions — behaviour is identical whether or not a dedicated worker is used.
 
-### Python AI engine (`python-engine/`)
+**Encoder selection is hardware-adaptive** (`pickHwEncoder`/`buildEncoderArgs`): probes NVENC/QSV/AMF at startup (via `-f null -`, not `-y nul` which fails on Windows), uses H.264 hardware for ≤4K and HEVC hardware for 8K, and falls back to `libx264` (CPU, segmented in parallel for long videos) where there's no capable GPU — e.g. the live server. The same build runs everywhere, as fast as the host allows.
 
-`run_pipeline.py` orchestrates 12 stages: extract frames → denoise → deblur → temporal → upscale → face_restore → depth_simulation → fps_interpolation → hdr → color_grading → film_texture → export (rebuild to 10-bit HEVC). Each stage is a module in `modules/`. Stages emit progress as JSON lines on stdout for the Node worker to consume. The named AI models (Real-ESRGAN, CodeFormer, etc.) are aspirational — modules currently use OpenCV-based **fallback implementations** (per README "Fallback active").
+### Python AI engine (`python-engine/`) — currently unused
+
+`run_pipeline.py` orchestrates a 12-stage frame-by-frame pipeline, but it is **not wired into the running app** (enhancement uses the FFmpeg path above). Its modules are **OpenCV placeholders, not real AI** — `upscale.py` is explicitly "Simulated Real-ESRGAN"; the named models (Real-ESRGAN, CodeFormer, etc.) are aspirational (README "Fallback active"). It also requires `opencv-python`/`torch` which are not installed. Treat it as dead/reference code unless real model weights + deps are added.
 
 ### Progress / realtime (`backend/src/websocket/index.js`)
 
