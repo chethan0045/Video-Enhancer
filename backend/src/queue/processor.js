@@ -129,8 +129,8 @@ function getVideoInfo(inputPath) {
 // Choose the best encoder for the target resolution and available hardware.
 // ≤4K: H.264 hardware (NVENC > QSV > AMF) for universal playback. 8K: HEVC hardware
 // (H.264 can't do 8K). Returns null when no usable hardware encoder exists → software.
-function pickHwEncoder(targetH) {
-  if (targetH > 2160) {
+function pickHwEncoder(targetH, prefer) {
+  if (prefer === 'hevc' || targetH > 2160) {
     if (hw.nvencHevc) return 'hevc_nvenc';
     if (hw.qsvHevc) return 'hevc_qsv';
     if (hw.amfHevc) return 'hevc_amf';
@@ -143,12 +143,12 @@ function pickHwEncoder(targetH) {
 }
 
 // Whether the given target can be encoded in hardware on this host.
-function canHwEncode(targetH) {
-  return pickHwEncoder(targetH) !== null;
+function canHwEncode(targetH, prefer) {
+  return pickHwEncoder(targetH, prefer) !== null;
 }
 
-function buildEncoderArgs(useHW, info, outputPath, targetH = 2160) {
-  const enc = useHW ? pickHwEncoder(targetH) : null;
+function buildEncoderArgs(useHW, info, outputPath, targetH = 2160, prefer) {
+  const enc = useHW ? pickHwEncoder(targetH, prefer) : null;
   const bk = info.bitrate > 0 ? Math.max(8000, Math.round(info.bitrate * 1.5 / 1000)) : 20000;
   const tail = ['-pix_fmt', 'yuv420p', '-movflags', '+faststart', outputPath];
   // HEVC in MP4 needs the hvc1 tag to play in browsers/QuickTime.
@@ -177,8 +177,10 @@ function buildEncoderArgs(useHW, info, outputPath, targetH = 2160) {
       return ['-c:v', 'hevc_amf', '-quality', 'quality', '-rc', 'vbr_latency',
         '-b:v', `${bk}k`, '-maxrate', `${Math.round(bk * 1.5)}k`, ...hevcTail];
     default: {
-      // Software x264 (no GPU, e.g. live). Fast presets — this path has no hardware help,
-      // so favour speed; quality stays good for a "fast tier".
+      // Software (no GPU, e.g. live). Fast presets — favour speed.
+      if (prefer === 'hevc') {
+        return ['-c:v', 'libx265', ...SW_THREADS, '-preset', 'ultrafast', '-crf', '24', ...hevcTail];
+      }
       const ultraHD = targetH >= 2160;
       return ['-c:v', 'libx264', ...SW_THREADS,
         '-preset', ultraHD ? 'ultrafast' : 'veryfast',
@@ -874,13 +876,21 @@ async function processStudio(jobId, inputPath, settings = {}) {
   const p = settings.pipeline || job.pipeline || {};
   const editor = p.editor || {}, trim = editor.trim || {}, crop = editor.crop || {};
   const enh = p.enhance || {}, audio = p.audioCleanup || {}, subs = p.subtitles || {};
+  const exp = p.export || {};
   const info = getVideoInfo(inputPath);
   const srcH = info.height || 720;
+
+  // Output container + codec.
+  const fmt = ['mp4', 'mov', 'mkv'].includes(exp.format) ? exp.format : 'mp4';
+  const codecPrefer = exp.codec === 'h265' ? 'hevc' : undefined; // undefined → h264
+  // Rotate (degrees) and playback speed.
+  const rotate = [90, 180, 270].includes(+editor.rotate) ? +editor.rotate : 0;
+  const speed = Math.min(4, Math.max(0.25, parseFloat(editor.speed) || 1));
 
   const outputDir = path.join(__dirname, '..', 'outputs', jobId);
   const tempDir = path.join(outputDir, 'temp');
   fs.mkdirSync(tempDir, { recursive: true });
-  const finalVideo = path.join(outputDir, 'output.mp4');
+  const finalVideo = path.join(outputDir, `output.${fmt}`);
 
   await VideoJob.updateById(jobId, { $set: { status: 'processing', progress: 3 } });
   emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: 3 });
@@ -913,12 +923,21 @@ async function processStudio(jobId, inputPath, settings = {}) {
   if (enh.enabled && targetH && targetH > baseH) {
     vf.push(`scale=-2:${targetH}:flags=${targetH >= 4320 ? 'bicubic' : 'lanczos'}`);
   }
+  if (rotate === 90) vf.push('transpose=1');
+  else if (rotate === 270) vf.push('transpose=2');
+  else if (rotate === 180) vf.push('transpose=2,transpose=2');
+  if (speed !== 1) vf.push(`setpts=${(1 / speed).toFixed(4)}*PTS`);
 
   // ── Audio filters ──
   const af = [];
   if (audio.enabled) {
     const nr = Math.round(6 + Math.min(1, Math.max(0, parseFloat(audio.strength ?? 0.6))) * 30);
     af.push('highpass=f=85', `afftdn=nr=${nr}:nf=-30`);
+  }
+  if (speed !== 1) {
+    // atempo handles 0.5–2.0 per stage; chain for larger factors.
+    let s = speed; while (s > 2) { af.push('atempo=2.0'); s /= 2; } while (s < 0.5) { af.push('atempo=0.5'); s *= 2; }
+    af.push(`atempo=${s.toFixed(3)}`);
   }
 
   await setStageStatus(jobId, 'edit', 'completed', 100);
@@ -927,8 +946,9 @@ async function processStudio(jobId, inputPath, settings = {}) {
   // On tiny hosts, skip the memory-heavy Whisper step so the export still succeeds.
   if (subs.enabled && LOW_MEM) console.warn(`[Studio] Low memory (≈${MEM_MB}MB) — skipping subtitles for this export`);
   const wantSubs = !!subs.enabled && !LOW_MEM;
+  // Subtitles need an intermediate mp4 to transcribe; otherwise encode straight to final.
   const pass1 = wantSubs ? path.join(tempDir, 'pass1.mp4') : finalVideo;
-  const enc = buildEncoderArgs(canHwEncode(targetH || srcH), info, pass1, targetH || srcH);
+  const enc = buildEncoderArgs(canHwEncode(targetH || srcH, wantSubs ? undefined : codecPrefer), info, pass1, targetH || srcH, wantSubs ? undefined : codecPrefer);
   const out = enc.pop();
   const args = ['-y'];
   if (doTrim) args.push('-ss', String(ts));
@@ -938,7 +958,7 @@ async function processStudio(jobId, inputPath, settings = {}) {
   if (af.length) args.push('-af', af.join(','));
   args.push(...enc, '-c:a', 'aac', '-b:a', '192k', out);
 
-  const dur = doTrim ? (te - ts) : info.duration;
+  const dur = (doTrim ? (te - ts) : info.duration) / speed;
   await runFFmpeg(args, (el) => {
     const ceil = wantSubs ? 60 : 95;
     const pct = dur > 0 ? Math.min(ceil, 5 + Math.round((el / dur) * (ceil - 5))) : 40;
@@ -972,7 +992,7 @@ async function processStudio(jobId, inputPath, settings = {}) {
       fs.renameSync(pass1, finalVideo); // keep srt as a side artifact; deliver the video
     } else {
       const style = "force_style='Fontsize=22,PrimaryColour=&H00FFFFFF&,OutlineColour=&H90000000&,BorderStyle=3,Outline=1,Shadow=0,MarginV=28'";
-      const e2 = buildEncoderArgs(canHwEncode(targetH || srcH), info, finalVideo, targetH || srcH);
+      const e2 = buildEncoderArgs(canHwEncode(targetH || srcH, codecPrefer), info, finalVideo, targetH || srcH, codecPrefer);
       const o2 = e2.pop();
       await runFFmpeg(['-y', '-i', pass1, '-vf', `subtitles=subtitles.srt:${style}`, ...e2, '-c:a', 'copy', o2], null, { cwd: outputDir });
     }

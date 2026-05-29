@@ -169,6 +169,14 @@ interface Rect { left: number; top: number; width: number; height: number; }
 
         <div class="psec" *ngIf="active==='export'">
           <h5>⬇ Export</h5>
+          <div class="row2">
+            <label>Speed<select [(ngModel)]="speed"><option [ngValue]="0.5">0.5×</option><option [ngValue]="1">1× (normal)</option><option [ngValue]="1.5">1.5×</option><option [ngValue]="2">2×</option></select></label>
+            <label>Rotate<select [(ngModel)]="rotate"><option [ngValue]="0">0°</option><option [ngValue]="90">90°</option><option [ngValue]="180">180°</option><option [ngValue]="270">270°</option></select></label>
+          </div>
+          <div class="row2">
+            <label>Format<select [(ngModel)]="exportFormat"><option value="mp4">MP4</option><option value="mov">MOV</option><option value="mkv">MKV</option></select></label>
+            <label>Codec<select [(ngModel)]="exportCodec"><option value="h264">H.264</option><option value="h265">H.265 (HEVC)</option></select></label>
+          </div>
           <div class="summary">
             <div [class.on]="hasTrim">✂ Trim {{ hasTrim ? formatTime(trimEnd-trimStart) : 'off' }}</div>
             <div [class.on]="crop.enabled">📐 Crop {{ crop.enabled ? crop.width+'×'+crop.height : 'off' }}</div>
@@ -340,6 +348,10 @@ export class StudioComponent implements OnDestroy {
   enhance = { enabled: true, target: '1080p', color: 'cinematic', denoise: true };
   audio = { enabled: false, strength: 0.6 };
   subs = { enabled: false, language: 'auto', model: 'tiny', output: 'burn' };
+  speed = 1;
+  rotate = 0;
+  exportFormat = 'mp4';
+  exportCodec = 'h264';
 
   videoWidth = 0; videoHeight = 0;
   displayRect: Rect = { left: 0, top: 0, width: 0, height: 0 };
@@ -475,10 +487,12 @@ export class StudioComponent implements OnDestroy {
       editor: {
         trim: { enabled: doTrim, start: this.trimStart, end: this.trimEnd },
         crop: { enabled: doCrop, x: this.crop.x, y: this.crop.y, width: this.crop.width, height: this.crop.height },
+        rotate: this.rotate, speed: this.speed,
       },
       enhance: { enabled: this.enhance.enabled, target: this.enhance.target, color: this.enhance.color, denoise: this.enhance.denoise },
       audioCleanup: { enabled: this.audio.enabled, strength: this.audio.strength },
       subtitles: { enabled: this.subs.enabled, language: this.subs.language, model: this.subs.model, output: this.subs.output },
+      export: { format: this.exportFormat, codec: this.exportCodec },
     };
     try {
       const res = await firstValueFrom(this.jobService.create(this.videoFile.name.replace(/\.[^/.]+$/, ''), { pipeline }, this.videoFile, 'studio'));
