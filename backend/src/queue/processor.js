@@ -20,7 +20,20 @@ const NUM_WORKERS = Math.max(2, os.cpus().length);
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 let ffmpegChecked = false, ffmpegAvailable = false;
-let hw = { nvenc: false, nvdec: false, qsv: false, amf: false };
+// H.264 encoders (used for ≤4K, universally playable) and HEVC encoders (used for 8K,
+// since H.264 hardware tops out near 4K). Detected at runtime so the same build runs
+// fast on NVIDIA, Intel or AMD hardware and falls back to CPU where there's no GPU.
+let hw = {
+  nvenc: false, qsv: false, amf: false,        // H.264
+  nvencHevc: false, qsvHevc: false, amfHevc: false, // HEVC (8K-capable)
+};
+
+function probeEncoder(name) {
+  try {
+    execSync(`ffmpeg -f lavfi -i color=s=1280x720:d=0.5 -c:v ${name} -b:v 1M -y nul`, { windowsHide: true, stdio: 'pipe' });
+    return true;
+  } catch { return false; }
+}
 
 function checkFfmpeg() {
   if (ffmpegChecked) return ffmpegAvailable;
@@ -29,15 +42,18 @@ function checkFfmpeg() {
     execSync('ffmpeg -version', { stdio: 'pipe', windowsHide: true });
     ffmpegAvailable = true;
     console.log('[Processor] FFmpeg detected');
-    try {
-      execSync('ffmpeg -f lavfi -i color=s=1280x720:d=0.5 -c:v h264_nvenc -preset p7 -b:v 1M -y nul', { windowsHide: true, stdio: 'pipe' });
-      hw.nvenc = true;
-      console.log('[Processor] NVENC verified');
-    } catch { console.log('[Processor] NVENC unavailable'); }
-    try { execSync('ffmpeg -f lavfi -i color=s=1280x720:d=0.5 -c:v h264_qsv -b:v 1M -y nul', { windowsHide: true, stdio: 'pipe' }); hw.qsv = true; } catch {}
-    try { execSync('ffmpeg -f lavfi -i color=s=1280x720:d=0.5 -c:v h264_amf -b:v 1M -y nul', { windowsHide: true, stdio: 'pipe' }); hw.amf = true; } catch {}
-    const parts = []; if (hw.nvenc) parts.push('NVENC'); if (hw.qsv) parts.push('QSV'); if (hw.amf) parts.push('AMF');
-    if (parts.length) console.log(`[Processor] HW encoders: ${parts.join(', ')}`); else console.log('[Processor] Using libx264 (no HW encoders)');
+
+    hw.nvenc = probeEncoder('h264_nvenc');
+    hw.qsv = probeEncoder('h264_qsv');
+    hw.amf = probeEncoder('h264_amf');
+    // Only bother probing a vendor's HEVC encoder if its H.264 one works.
+    hw.nvencHevc = hw.nvenc && probeEncoder('hevc_nvenc');
+    hw.qsvHevc = hw.qsv && probeEncoder('hevc_qsv');
+    hw.amfHevc = hw.amf && probeEncoder('hevc_amf');
+
+    const h264 = [hw.nvenc && 'NVENC', hw.qsv && 'QSV', hw.amf && 'AMF'].filter(Boolean);
+    const hevc = [hw.nvencHevc && 'NVENC', hw.qsvHevc && 'QSV', hw.amfHevc && 'AMF'].filter(Boolean);
+    console.log(`[Processor] HW H.264: ${h264.join(', ') || 'none (libx264)'} | HW HEVC/8K: ${hevc.join(', ') || 'none (libx264)'}`);
   } catch { ffmpegAvailable = false; console.warn('[Processor] FFmpeg NOT found'); }
   return ffmpegAvailable;
 }
@@ -72,20 +88,64 @@ function getVideoInfo(inputPath) {
   } catch { return { width: 1280, height: 720, fps: 24, duration: 30, codec: '', bitrate: 0, audioCodec: '' }; }
 }
 
-function buildEncoderArgs(useHW, info, outputPath, targetH = 2160) {
-  if (useHW) {
-    const bk = info.bitrate > 0 ? Math.max(8000, Math.round(info.bitrate * 1.5 / 1000)) : 20000;
-    return ['-c:v', 'h264_nvenc', '-preset', 'p7', '-rc', 'vbr',
-      '-b:v', `${bk}k`, '-maxrate', `${Math.round(bk * 1.5)}k`, '-bufsize', `${Math.round(bk * 2)}k`,
-      '-qmin', '18', '-qmax', '28', '-profile:v', 'main',
-      '-pix_fmt', 'yuv420p', '-movflags', '+faststart', outputPath];
+// Choose the best encoder for the target resolution and available hardware.
+// ≤4K: H.264 hardware (NVENC > QSV > AMF) for universal playback. 8K: HEVC hardware
+// (H.264 can't do 8K). Returns null when no usable hardware encoder exists → software.
+function pickHwEncoder(targetH) {
+  if (targetH > 2160) {
+    if (hw.nvencHevc) return 'hevc_nvenc';
+    if (hw.qsvHevc) return 'hevc_qsv';
+    if (hw.amfHevc) return 'hevc_amf';
+    return null;
   }
-  const ultraHD = targetH >= 4320;
-  return ['-c:v', 'libx264',
-    '-preset', ultraHD ? 'veryfast' : 'fast',
-    '-crf', ultraHD ? '20' : '18',
-    '-tune', 'film',
-    '-pix_fmt', 'yuv420p', '-movflags', '+faststart', outputPath];
+  if (hw.nvenc) return 'h264_nvenc';
+  if (hw.qsv) return 'h264_qsv';
+  if (hw.amf) return 'h264_amf';
+  return null;
+}
+
+// Whether the given target can be encoded in hardware on this host.
+function canHwEncode(targetH) {
+  return pickHwEncoder(targetH) !== null;
+}
+
+function buildEncoderArgs(useHW, info, outputPath, targetH = 2160) {
+  const enc = useHW ? pickHwEncoder(targetH) : null;
+  const bk = info.bitrate > 0 ? Math.max(8000, Math.round(info.bitrate * 1.5 / 1000)) : 20000;
+  const tail = ['-pix_fmt', 'yuv420p', '-movflags', '+faststart', outputPath];
+  // HEVC in MP4 needs the hvc1 tag to play in browsers/QuickTime.
+  const hevcTail = ['-pix_fmt', 'yuv420p', '-tag:v', 'hvc1', '-movflags', '+faststart', outputPath];
+
+  switch (enc) {
+    case 'h264_nvenc':
+      return ['-c:v', 'h264_nvenc', '-preset', 'p7', '-rc', 'vbr',
+        '-b:v', `${bk}k`, '-maxrate', `${Math.round(bk * 1.5)}k`, '-bufsize', `${Math.round(bk * 2)}k`,
+        '-qmin', '18', '-qmax', '28', '-profile:v', 'main', ...tail];
+    case 'hevc_nvenc':
+      return ['-c:v', 'hevc_nvenc', '-preset', 'p6', '-rc', 'vbr',
+        '-b:v', `${bk}k`, '-maxrate', `${Math.round(bk * 1.5)}k`, '-bufsize', `${Math.round(bk * 2)}k`, ...hevcTail];
+    case 'h264_qsv':
+      // Intel Quick Sync — big speed-up over software on Iris/UHD graphics.
+      // Bitrate-based VBR (matches the validated probe); avoid mixing global_quality with -b:v.
+      return ['-c:v', 'h264_qsv', '-preset', 'veryfast',
+        '-b:v', `${bk}k`, '-maxrate', `${Math.round(bk * 1.5)}k`, '-profile:v', 'high', ...tail];
+    case 'hevc_qsv':
+      return ['-c:v', 'hevc_qsv', '-preset', 'veryfast',
+        '-b:v', `${bk}k`, '-maxrate', `${Math.round(bk * 1.5)}k`, ...hevcTail];
+    case 'h264_amf':
+      return ['-c:v', 'h264_amf', '-quality', 'quality', '-rc', 'vbr_latency',
+        '-b:v', `${bk}k`, '-maxrate', `${Math.round(bk * 1.5)}k`, ...tail];
+    case 'hevc_amf':
+      return ['-c:v', 'hevc_amf', '-quality', 'quality', '-rc', 'vbr_latency',
+        '-b:v', `${bk}k`, '-maxrate', `${Math.round(bk * 1.5)}k`, ...hevcTail];
+    default: {
+      const ultraHD = targetH >= 4320;
+      return ['-c:v', 'libx264',
+        '-preset', ultraHD ? 'veryfast' : 'fast',
+        '-crf', ultraHD ? '20' : '18',
+        '-tune', 'film', ...tail];
+    }
+  }
 }
 
 async function processVideo(jobId, inputPath, settings = {}) {
@@ -204,10 +264,14 @@ async function processVideo(jobId, inputPath, settings = {}) {
 
   const filterStr = filters.join(',');
   const vfArgs = filterStr ? ['-vf', filterStr] : [];
-  const useHW = hw.nvenc && targetH <= 2160;
+  // Use hardware whenever this host can encode the target res (H.264 ≤4K, HEVC for 8K).
+  // Falls back to software automatically where there's no capable GPU (e.g. the live server).
+  const useHW = canHwEncode(targetH);
   const longVideo = info.duration > 180;
 
-  if (longVideo && srcH < 2160 && NUM_WORKERS >= 2) {
+  // CPU-parallel segmenting only helps the software path; a hardware encoder is
+  // already fast and a single GPU session avoids multi-session contention.
+  if (longVideo && srcH < 2160 && NUM_WORKERS >= 2 && !useHW) {
     // ── Segmented parallel processing ──
     const SEG_COUNT = Math.min(NUM_WORKERS, 4);
     const segDir = path.join(tempDir, 'segments');
@@ -392,17 +456,15 @@ async function processEdit(jobId, inputPath, settings = {}) {
   if (doTrim) args.push('-t', String(te - ts));
 
   if (doCrop) {
-    args.push('-vf', `crop=${crop.width}:${crop.height}:${crop.x}:${crop.y}`);
-    if (hw.nvenc) {
-      args.push('-c:v', 'h264_nvenc', '-preset', 'p5', '-rc', 'vbr', '-cq', '20', '-pix_fmt', 'yuv420p');
-    } else {
-      args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p');
-    }
-    args.push('-c:a', 'copy');
+    // Cropping requires a re-encode — use the same hardware-aware encoder selection.
+    const cropH = crop.height || info.height || 1080;
+    const encArgs = buildEncoderArgs(canHwEncode(cropH), info, outputVideo, cropH);
+    const out = encArgs.pop(); // outputVideo (last element)
+    args.push('-vf', `crop=${crop.width}:${crop.height}:${crop.x}:${crop.y}`, ...encArgs, '-c:a', 'copy', out);
   } else {
-    args.push('-c', 'copy');
+    // Trim-only (or no edits) → stream copy: fast and lossless.
+    args.push('-c', 'copy', '-movflags', '+faststart', outputVideo);
   }
-  args.push('-movflags', '+faststart', outputVideo);
 
   await runFFmpeg(args, (elapsed) => {
     const pct = outDuration > 0 ? Math.min(95, 5 + Math.round((elapsed / outDuration) * 90)) : 50;
