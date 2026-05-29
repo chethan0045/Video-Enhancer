@@ -17,6 +17,27 @@ process.env.Path = [
 
 const NUM_WORKERS = Math.max(2, os.cpus().length);
 
+// Resolve ffmpeg/ffprobe binaries. Prefer a system install (keeps hardware encoders like
+// QSV/NVENC available in dev), and fall back to the bundled static binaries so the app
+// works on hosts without a system ffmpeg — e.g. the live server. Override with env if needed.
+function resolveBinaries() {
+  let ffmpeg = process.env.FFMPEG_PATH || 'ffmpeg';
+  let ffprobe = process.env.FFPROBE_PATH || 'ffprobe';
+  if (!process.env.FFMPEG_PATH) {
+    let systemOk = false;
+    try { execSync('ffmpeg -version', { stdio: 'pipe', windowsHide: true }); systemOk = true; } catch { }
+    if (!systemOk) {
+      try {
+        const staticFf = require('ffmpeg-static');
+        if (staticFf) { ffmpeg = staticFf; ffprobe = require('ffprobe-static').path || ffprobe; }
+      } catch { /* packages absent → keep PATH-based names */ }
+    }
+  }
+  return { ffmpeg, ffprobe };
+}
+const { ffmpeg: FFMPEG, ffprobe: FFPROBE } = resolveBinaries();
+console.log(`[Processor] ffmpeg=${FFMPEG === 'ffmpeg' ? 'system PATH' : FFMPEG}`);
+
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 let ffmpegChecked = false, ffmpegAvailable = false;
@@ -33,7 +54,7 @@ function probeEncoder(name) {
     // Use the null muxer (`-f null -`), NOT `-y nul`: on Windows ffmpeg can't infer a
     // format from the filename "nul" and fails for every encoder — which previously meant
     // hardware acceleration was never detected and everything fell back to software.
-    execSync(`ffmpeg -f lavfi -i color=s=1280x720:d=0.5 -c:v ${name} -b:v 1M -f null -`, { windowsHide: true, stdio: 'pipe' });
+    execSync(`"${FFMPEG}" -f lavfi -i color=s=1280x720:d=0.5 -c:v ${name} -b:v 1M -f null -`, { windowsHide: true, stdio: 'pipe' });
     return true;
   } catch { return false; }
 }
@@ -42,7 +63,7 @@ function checkFfmpeg() {
   if (ffmpegChecked) return ffmpegAvailable;
   ffmpegChecked = true;
   try {
-    execSync('ffmpeg -version', { stdio: 'pipe', windowsHide: true });
+    execSync(`"${FFMPEG}" -version`, { stdio: 'pipe', windowsHide: true });
     ffmpegAvailable = true;
     console.log('[Processor] FFmpeg detected');
 
@@ -63,7 +84,7 @@ function checkFfmpeg() {
 
 async function runFFmpeg(args, onProgress) {
   return new Promise((resolve, reject) => {
-    const proc = spawn('ffmpeg', args, { windowsHide: true });
+    const proc = spawn(FFMPEG, args, { windowsHide: true });
     let stderr = '';
     proc.stderr.on('data', (data) => {
       stderr += data.toString();
@@ -77,7 +98,7 @@ async function runFFmpeg(args, onProgress) {
 
 function getVideoInfo(inputPath) {
   try {
-    const r = execSync(`ffprobe -v quiet -print_format json -show_format -show_streams "${inputPath}"`, { encoding: 'utf8', windowsHide: true });
+    const r = execSync(`"${FFPROBE}" -v quiet -print_format json -show_format -show_streams "${inputPath}"`, { encoding: 'utf8', windowsHide: true });
     const info = JSON.parse(r);
     const vs = info.streams.find(s => s.codec_type === 'video') || {};
     const fpsParts = (vs.avg_frame_rate || '24/1').split('/');
