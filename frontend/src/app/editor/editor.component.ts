@@ -16,14 +16,25 @@ import { JobService } from '../core/job.service';
         <h1>Video Editor</h1>
         <span class="file-name" *ngIf="videoFile">{{ videoFile.name }}</span>
         <div class="header-actions">
-          <button class="btn-primary" (click)="applyAndContinue()" [disabled]="processing">
-            {{ processing ? 'Creating Job...' : 'Apply & Start Enhancement →' }}
+          <button class="btn-primary" (click)="applyAndExport()" [disabled]="processing || !videoUrl">
+            {{ processing ? 'Exporting...' : 'Apply & Export Clip →' }}
           </button>
         </div>
       </header>
 
       <div class="content">
-        <div class="editor-layout">
+        <!-- File picker shown when no video is loaded (standalone Edit tool) -->
+        <div class="dropzone" *ngIf="!videoUrl"
+             (dragover)="onDragOver($event)" (dragleave)="isDragging = false" (drop)="onDrop($event)"
+             [class.dragging]="isDragging">
+          <div class="icon">✂</div>
+          <h3>Drop a video to edit</h3>
+          <p>Trim and crop your clip, then export it — no AI enhancement is applied.</p>
+          <input type="file" #fileInput accept="video/*" (change)="onFileSelected($event)" hidden />
+          <button class="btn-outline" (click)="fileInput.click()">Browse Files</button>
+        </div>
+
+        <div class="editor-layout" *ngIf="videoUrl">
           <!-- Video Preview -->
           <div class="preview-panel">
             <div class="video-container" #videoContainer>
@@ -134,6 +145,19 @@ import { JobService } from '../core/job.service';
     .btn-ghost { background: transparent; border: 1px solid #2a2a3e; color: #8888aa; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 13px; }
 
     .content { flex: 1; padding: 24px; overflow: auto; }
+    .dropzone {
+      max-width: 640px; margin: 48px auto; padding: 64px 32px; text-align: center;
+      border: 2px dashed #2a2a3e; border-radius: 24px; transition: all 0.3s;
+    }
+    .dropzone.dragging { border-color: #e94560; background: #1a1015; }
+    .dropzone .icon { font-size: 44px; margin-bottom: 16px; }
+    .dropzone h3 { font-size: 18px; margin-bottom: 8px; }
+    .dropzone p { color: #8888aa; font-size: 14px; margin-bottom: 20px; }
+    .btn-outline {
+      padding: 12px 24px; background: transparent; border: 1px solid #2a2a3e;
+      border-radius: 10px; color: white; cursor: pointer;
+    }
+    .btn-outline:hover { border-color: #e94560; }
     .editor-layout { display: grid; grid-template-columns: 1fr 340px; gap: 24px; max-width: 1400px; margin: 0 auto; height: 100%; }
 
     .preview-panel { display: flex; flex-direction: column; }
@@ -238,6 +262,7 @@ export class EditorComponent implements AfterViewInit, OnDestroy {
   videoFile: File | null = null;
   videoUrl: string = '';
   videoReady = false;
+  isDragging = false;
   playing = false;
   currentTime = 0;
   duration = 0;
@@ -312,6 +337,33 @@ export class EditorComponent implements AfterViewInit, OnDestroy {
 
   get videoEl(): HTMLVideoElement {
     return this.videoElRef?.nativeElement;
+  }
+
+  onDragOver(e: DragEvent) {
+    e.preventDefault();
+    this.isDragging = true;
+  }
+
+  onDrop(e: DragEvent) {
+    e.preventDefault();
+    this.isDragging = false;
+    const file = e.dataTransfer?.files[0];
+    if (file && file.type.startsWith('video/')) this.loadFile(file);
+  }
+
+  onFileSelected(e: any) {
+    const file = e.target.files?.[0];
+    if (file) this.loadFile(file);
+  }
+
+  private loadFile(file: File) {
+    this.videoFile = file;
+    this.videoUrl = URL.createObjectURL(file);
+    // Reset edit state for the new clip; onVideoLoaded re-initialises once metadata is ready.
+    this.videoReady = false;
+    this.trimEnabled = false;
+    this.cropEnabled = false;
+    this.showCropOverlay = false;
   }
 
   onVideoLoaded() {
@@ -511,15 +563,11 @@ export class EditorComponent implements AfterViewInit, OnDestroy {
   }
 
   goBack() {
-    if (this.videoFile) {
-      this.router.navigate(['/upload']);
-    } else {
-      this.router.navigate(['/dashboard']);
-    }
+    this.router.navigate(['/dashboard']);
   }
 
-  async applyAndContinue() {
-    if (this.processing) return;
+  async applyAndExport() {
+    if (this.processing || !this.videoUrl) return;
     this.processing = true;
 
     try {
@@ -530,12 +578,14 @@ export class EditorComponent implements AfterViewInit, OnDestroy {
         },
       };
 
+      // Fresh file → create a new edit-mode job (trim/crop only, no enhancement).
       if (this.videoFile) {
         const result = await firstValueFrom(
           this.jobService.create(
             this.videoFile.name.replace(/\.[^/.]+$/, ''),
             { pipeline: editorSettings },
-            this.videoFile
+            this.videoFile,
+            'edit'
           )
         );
 
@@ -545,13 +595,14 @@ export class EditorComponent implements AfterViewInit, OnDestroy {
         }
       }
 
+      // Editing an existing job's source: update its edit settings and re-run.
       const id = this.route.snapshot.paramMap.get('id');
       if (id) {
         await firstValueFrom(this.jobService.updatePipeline(id, editorSettings));
         this.router.navigate(['/processing', id]);
       }
     } catch (err) {
-      console.error('Failed to apply edits:', err);
+      console.error('Failed to export edited clip:', err);
       this.processing = false;
     }
   }

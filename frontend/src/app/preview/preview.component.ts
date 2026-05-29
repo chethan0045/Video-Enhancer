@@ -24,7 +24,7 @@ import { JobService, VideoJob } from '../core/job.service';
             <video #videoBefore [src]="getVideoUrl(job.inputPath, 'uploads')" muted playsinline preload="auto"></video>
           </div>
           <div class="viewer after" *ngIf="job.outputPath">
-            <div class="label after-label">After — AI Enhanced</div>
+            <div class="label after-label">{{ job.mode === 'edit' ? 'After — Edited' : 'After — AI Enhanced' }}</div>
             <video #videoAfter [src]="getVideoUrl(job.outputPath, 'outputs')" muted playsinline preload="auto"></video>
           </div>
         </div>
@@ -41,7 +41,7 @@ import { JobService, VideoJob } from '../core/job.service';
         </div>
 
         <div class="job-details">
-          <h3>Enhancement Details</h3>
+          <h3>{{ job.mode === 'edit' ? 'Edit Details' : 'Enhancement Details' }}</h3>
           <div class="details-grid">
             <div class="detail">
               <span class="detail-label">Status</span>
@@ -68,7 +68,9 @@ import { JobService, VideoJob } from '../core/job.service';
         </div>
 
         <div class="actions">
-          <button class="btn-ghost" routerLink="/upload">New Enhancement</button>
+          <button class="btn-ghost" [routerLink]="job.mode === 'edit' ? '/editor' : '/upload'">
+            {{ job.mode === 'edit' ? 'New Edit' : 'New Enhancement' }}
+          </button>
           <button class="btn-ghost" routerLink="/dashboard">All Jobs</button>
         </div>
       </div>
@@ -231,7 +233,7 @@ export class PreviewComponent implements OnInit, AfterViewInit {
     if (this.job?.outputPath) {
       const a = document.createElement('a');
       a.href = this.getVideoUrl(this.job.outputPath, 'outputs');
-      a.download = `${this.job.title}_enhanced.mp4`;
+      a.download = `${this.job.title}_${this.job.mode === 'edit' ? 'edited' : 'enhanced'}.mp4`;
       a.click();
     }
   }

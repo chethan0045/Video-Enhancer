@@ -4,13 +4,21 @@ const path = require('path');
 const fs = require('fs');
 const { VideoJob } = require('../models');
 const { onJob } = require('./index');
+const { processEdit } = require('./processor');
 
 const REDIS_CONFIG = {
   host: process.env.REDIS_HOST || 'localhost',
   port: parseInt(process.env.REDIS_PORT || '6379'),
 };
 
-const processVideo = async ({ jobId, inputPath, pipeline }) => {
+const processVideo = async ({ jobId, inputPath, pipeline, mode }) => {
+  // Edit jobs (trim/crop) never touch the Python AI engine — handle them with the JS editor.
+  if (mode === 'edit') {
+    console.log(`[Worker] Editing job ${jobId}`);
+    await processEdit(jobId, inputPath, { pipeline });
+    return { success: true, jobId };
+  }
+
   console.log(`[Worker] Processing job ${jobId}`);
 
   const pythonScript = path.join(__dirname, '..', '..', '..', 'python-engine', 'run_pipeline.py');

@@ -14,9 +14,12 @@ exports.createJob = async (req, res) => {
       return res.status(400).json({ error: 'File must be a video' });
     }
 
+    const mode = req.body.mode === 'edit' ? 'edit' : 'enhance';
+
     const job = await VideoJob.create({
       userId: req.user.id,
       title: title || 'Untitled',
+      mode,
       inputPath,
       inputSize: req.file?.size,
       inputFormat: req.file?.mimetype,
@@ -74,9 +77,10 @@ exports.retryJob = async (req, res) => {
     if (!job || job.userId !== req.user.id) return res.status(404).json({ error: 'Job not found' });
     if (job.status !== 'failed') return res.status(400).json({ error: 'Job is not in failed state' });
 
-    const { defaultStages } = require('../models/VideoJob');
+    const { defaultStages, defaultEditStages } = require('../models/VideoJob');
+    const stages = job.mode === 'edit' ? defaultEditStages() : defaultStages();
     const updated = await VideoJob.updateById(req.params.id, {
-      $set: { status: 'queued', progress: 0, error: null, pipelineStages: defaultStages() },
+      $set: { status: 'queued', progress: 0, error: null, pipelineStages: stages },
     });
 
     if (updated) await addJob(updated);

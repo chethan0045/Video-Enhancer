@@ -51,18 +51,20 @@ try {
 
 const memoryEmitter = new EventEmitter();
 const memoryJobs = new Map();
-const { processVideo } = require('./processor');
+const { processVideo, processEdit } = require('./processor');
 
 exports.addJob = async (job) => {
   const jobId = job._id.toString();
+  const mode = job.mode === 'edit' ? 'edit' : 'enhance';
   if (useBull && queue) {
     return queue.add('process-video', {
-      jobId, userId: job.userId.toString(), inputPath: job.inputPath, pipeline: job.pipeline,
+      jobId, userId: job.userId.toString(), inputPath: job.inputPath, pipeline: job.pipeline, mode,
     }, { jobId, priority: 1 });
   }
-  memoryJobs.set(jobId, { jobId, inputPath: job.inputPath, pipeline: job.pipeline });
+  memoryJobs.set(jobId, { jobId, inputPath: job.inputPath, pipeline: job.pipeline, mode });
+  const run = mode === 'edit' ? processEdit : processVideo;
   setImmediate(() => {
-    processVideo(jobId, job.inputPath, { pipeline: job.pipeline }).catch((err) => {
+    run(jobId, job.inputPath, { pipeline: job.pipeline }).catch((err) => {
       console.error(`[Queue] Job ${jobId} failed:`, err.message);
       VideoJob.updateById(jobId, { $set: { status: 'failed', error: err.message } }).catch(() => {});
     });

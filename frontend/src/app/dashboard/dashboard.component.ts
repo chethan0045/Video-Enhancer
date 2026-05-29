@@ -24,8 +24,21 @@ import { JobService, VideoJob } from '../core/job.service';
 
       <div class="hero">
         <h2>AI Cinematic Video Remaster</h2>
-        <p>Transform old footage into modern RED-camera quality with temporal AI enhancement</p>
-        <button class="btn-primary" routerLink="/upload">New Enhancement</button>
+        <p>Two separate tools — enhance footage to clean 8K, or quickly trim and crop a clip.</p>
+        <div class="tool-cards">
+          <div class="tool-card" routerLink="/upload">
+            <div class="tool-icon">✨</div>
+            <h3>Enhance Video</h3>
+            <p>Upscale to clean, sharp 8K with AI denoise, deblur and color grading.</p>
+            <span class="tool-cta">Enhance →</span>
+          </div>
+          <div class="tool-card" routerLink="/editor">
+            <div class="tool-icon">✂</div>
+            <h3>Edit Video</h3>
+            <p>Trim and crop your clip and export it — no enhancement applied.</p>
+            <span class="tool-cta">Edit →</span>
+          </div>
+        </div>
       </div>
 
       <section class="recent">
@@ -37,15 +50,21 @@ import { JobService, VideoJob } from '../core/job.service';
         <div *ngIf="loading" class="loading">Loading...</div>
 
         <div *ngIf="!loading && jobs.length === 0" class="empty">
-          <p>No enhancement jobs yet</p>
-          <button class="btn-primary" routerLink="/upload">Upload Your First Video</button>
+          <p>No jobs yet</p>
+          <div class="empty-actions">
+            <button class="btn-primary" routerLink="/upload">Enhance a Video</button>
+            <button class="btn-ghost" routerLink="/editor">Edit a Video</button>
+          </div>
         </div>
 
         <div class="job-grid" *ngIf="!loading && jobs.length > 0">
           <div class="job-card" *ngFor="let job of jobs" [routerLink]="['/processing', job._id]">
-            <div class="job-status {{ job.status }}">
-              <span class="status-dot"></span>
-              {{ job.status }}
+            <div class="job-top">
+              <div class="job-status {{ job.status }}">
+                <span class="status-dot"></span>
+                {{ job.status }}
+              </div>
+              <span class="mode-tag {{ job.mode || 'enhance' }}">{{ job.mode === 'edit' ? 'Edit' : 'Enhance' }}</span>
             </div>
             <h4>{{ job.title }}</h4>
             <div class="job-meta">
@@ -85,7 +104,22 @@ import { JobService, VideoJob } from '../core/job.service';
       background: radial-gradient(ellipse at 50% 0%, #1a1a2e 0%, transparent 70%);
     }
     .hero h2 { font-size: 36px; font-weight: 700; margin-bottom: 12px; }
-    .hero p { color: #8888aa; font-size: 16px; max-width: 500px; margin: 0 auto 32px; line-height: 1.6; }
+    .hero p { color: #8888aa; font-size: 16px; max-width: 560px; margin: 0 auto 32px; line-height: 1.6; }
+    .tool-cards { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; }
+    .tool-card {
+      width: 300px; text-align: left; background: #14141f; border: 1px solid #1e1e30;
+      border-radius: 18px; padding: 24px; cursor: pointer; transition: all 0.2s;
+    }
+    .tool-card:hover { border-color: #e94560; transform: translateY(-3px); }
+    .tool-icon { font-size: 30px; margin-bottom: 12px; }
+    .tool-card h3 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+    .tool-card p { color: #8888aa; font-size: 13px; line-height: 1.5; margin: 0 0 16px; }
+    .tool-cta { font-size: 14px; font-weight: 600; color: #e94560; }
+    .empty-actions { display: flex; gap: 12px; justify-content: center; }
+    .job-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .mode-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 3px 8px; border-radius: 6px; }
+    .mode-tag.enhance { background: #1a1a3e; color: #8888ff; }
+    .mode-tag.edit { background: #2e2410; color: #ffcc66; }
     .btn-primary {
       padding: 14px 32px; background: linear-gradient(135deg, #e94560, #ff6b6b);
       border: none; border-radius: 12px; color: white; font-size: 15px;

@@ -159,8 +159,11 @@ async function processVideo(jobId, inputPath, settings = {}) {
   // ── Build filter chain ──
   const filters = [];
 
-  if (denoise.enabled !== false && !is4K) {
-    const s = isHD ? 0.5 : (denoise.strength || 0.5);
+  // Denoise for a clean image. Kept on even for 4K sources (gentler), since
+  // upscaling to 8K otherwise amplifies grain/noise.
+  if (denoise.enabled !== false) {
+    const base = isHD ? 0.5 : (denoise.strength || 0.5);
+    const s = is4K ? Math.min(base, 0.35) : base;
     const strength = Math.max(1, Math.round(s * 4));
     filters.push(`hqdn3d=${strength}:${Math.max(1, strength - 1)}:${Math.max(1, strength - 1)}:${Math.max(1, strength - 1)}`);
   }
@@ -189,6 +192,8 @@ async function processVideo(jobId, inputPath, settings = {}) {
     filters.push(targetH >= 2160
       ? `zscale=h=${targetH}:filter=spline36:out_range=limited`
       : `scale=-2:${targetH}:flags=lanczos`);
+    // Smooth out banding in skies/gradients introduced by aggressive upscaling — keeps 8K output clean.
+    if (targetH >= 2160) filters.push('deband=range=16:blur=true');
   }
 
   if (p.editor?.crop?.enabled && (p.editor.crop.width || 0) > 0) {
@@ -325,4 +330,98 @@ async function simulatePipeline(jobId) {
   console.log(`[Simulator] Job ${jobId} complete`);
 }
 
-module.exports = { processVideo };
+// ── Shared stage helper (used by edit jobs) ──
+async function setStageStatus(jobId, name, status, pct) {
+  const j = await VideoJob.findById(jobId);
+  if (!j) return;
+  const stage = j.pipelineStages?.find(s => s.name === name);
+  if (stage) { stage.status = status; if (pct !== undefined) stage.progress = pct; }
+  await VideoJob.updateById(jobId, { $set: { pipelineStages: j.pipelineStages } }).catch(() => {});
+}
+
+/**
+ * Edit-only path — applies trim and/or crop and re-exports.
+ * Deliberately does NOT run any AI/enhancement filters; it is the
+ * separate "Edit Video" tool, kept independent from the enhancer.
+ */
+async function processEdit(jobId, inputPath, settings = {}) {
+  const job = await VideoJob.findById(jobId);
+  if (!job) throw new Error('Job not found');
+
+  const p = settings.pipeline || job.pipeline || {};
+  const editor = p.editor || {};
+  const trim = editor.trim || {};
+  const crop = editor.crop || {};
+
+  const ts = parseFloat(trim.start) || 0;
+  const te = parseFloat(trim.end) || 0;
+  const doTrim = trim.enabled && te > ts;
+  const doCrop = crop.enabled && (crop.width || 0) > 0 && (crop.height || 0) > 0;
+
+  const outputDir = path.join(__dirname, '..', 'outputs', jobId);
+  fs.mkdirSync(outputDir, { recursive: true });
+  const outputVideo = path.join(outputDir, 'output.mp4');
+
+  // No FFmpeg → we can't actually cut/crop; surface the original so the job still resolves.
+  if (!checkFfmpeg()) {
+    console.warn('[Editor] FFmpeg not found — exporting original without edits');
+    for (const sn of ['trim', 'crop', 'export']) await setStageStatus(jobId, sn, 'completed', 100);
+    await VideoJob.updateById(jobId, {
+      $set: { status: 'completed', progress: 100, completedAt: new Date(), outputPath: inputPath },
+    });
+    emitJobProgress(jobId, { userId: job.userId, status: 'completed', progress: 100 });
+    return;
+  }
+
+  const info = getVideoInfo(inputPath);
+  const outDuration = doTrim ? (te - ts) : info.duration;
+  console.log(`[Editor] Job ${jobId}: trim=${doTrim ? `${ts}→${te}` : 'no'}, crop=${doCrop ? `${crop.width}x${crop.height}` : 'no'}`);
+
+  await VideoJob.updateById(jobId, { $set: { status: 'processing', progress: 5 } });
+  emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: 5 });
+
+  // ── Trim ──
+  await setStageStatus(jobId, 'trim', doTrim ? 'processing' : 'skipped', doTrim ? 0 : 100);
+  // ── Crop ──
+  await setStageStatus(jobId, 'crop', doCrop ? 'processing' : 'skipped', doCrop ? 0 : 100);
+
+  // Build a single FFmpeg pass. Cropping requires a re-encode; trim-only can stream-copy (fast, no quality loss).
+  const args = ['-y'];
+  if (doTrim) args.push('-ss', String(ts));
+  args.push('-i', inputPath);
+  if (doTrim) args.push('-t', String(te - ts));
+
+  if (doCrop) {
+    args.push('-vf', `crop=${crop.width}:${crop.height}:${crop.x}:${crop.y}`);
+    if (hw.nvenc) {
+      args.push('-c:v', 'h264_nvenc', '-preset', 'p5', '-rc', 'vbr', '-cq', '20', '-pix_fmt', 'yuv420p');
+    } else {
+      args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p');
+    }
+    args.push('-c:a', 'copy');
+  } else {
+    args.push('-c', 'copy');
+  }
+  args.push('-movflags', '+faststart', outputVideo);
+
+  await runFFmpeg(args, (elapsed) => {
+    const pct = outDuration > 0 ? Math.min(95, 5 + Math.round((elapsed / outDuration) * 90)) : 50;
+    emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: pct });
+    VideoJob.updateById(jobId, { $set: { progress: pct } }).catch(() => {});
+  });
+
+  if (doTrim) await setStageStatus(jobId, 'trim', 'completed', 100);
+  if (doCrop) await setStageStatus(jobId, 'crop', 'completed', 100);
+  await setStageStatus(jobId, 'export', 'completed', 100);
+
+  await VideoJob.updateById(jobId, {
+    $set: {
+      status: 'completed', progress: 100, completedAt: new Date(), outputPath: outputVideo,
+      inputDuration: info.duration, inputResolution: { width: info.width, height: info.height },
+    },
+  });
+  emitJobProgress(jobId, { userId: job.userId, status: 'completed', progress: 100 });
+  console.log(`[Editor] Job ${jobId} complete`);
+}
+
+module.exports = { processVideo, processEdit };

@@ -13,6 +13,7 @@ const stageSchema = new mongoose.Schema({
 const schema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   title: { type: String, required: true, trim: true },
+  mode: { type: String, enum: ['enhance', 'edit'], default: 'enhance', index: true },
   inputPath: { type: String, required: true },
   inputFormat: String,
   inputSize: Number,
@@ -100,4 +101,11 @@ function defaultStages() {
   ].map(s => ({ ...s, status: 'pending', progress: 0 }));
 }
 
-module.exports = { VideoJobModel, schema, buildDefaultPipeline, defaultStages };
+// Edit jobs (trim/crop) skip the AI pipeline — they track only these lightweight stages.
+function defaultEditStages() {
+  return [
+    { name: 'trim' }, { name: 'crop' }, { name: 'export' },
+  ].map(s => ({ ...s, status: 'pending', progress: 0 }));
+}
+
+module.exports = { VideoJobModel, schema, buildDefaultPipeline, defaultStages, defaultEditStages };

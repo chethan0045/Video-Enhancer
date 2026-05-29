@@ -7,6 +7,7 @@ export interface VideoJob {
   _id: string;
   userId: string;
   title: string;
+  mode?: 'enhance' | 'edit';
   inputPath: string;
   outputPath?: string;
   status: string;
@@ -35,10 +36,11 @@ export class JobService {
     return this.http.get<any>(`${environment.apiUrl}/jobs/${id}`);
   }
 
-  create(title: string, settings: any, file?: File): Observable<{ job: VideoJob }> {
+  create(title: string, settings: any, file?: File, mode: 'enhance' | 'edit' = 'enhance'): Observable<{ job: VideoJob }> {
     const formData = new FormData();
     formData.append('video', file!);
     formData.append('title', title);
+    formData.append('mode', mode);
     formData.append('settings', JSON.stringify(settings));
     return this.http.post<any>(`${environment.apiUrl}/jobs`, formData);
   }

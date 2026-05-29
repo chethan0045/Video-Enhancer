@@ -1,7 +1,7 @@
 import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { UploadService } from '../core/upload.service';
 import { JobService } from '../core/job.service';
@@ -9,7 +9,7 @@ import { JobService } from '../core/job.service';
 @Component({
   selector: 'app-upload',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, RouterLink],
   template: `
     <div class="upload-page">
       <header class="header">
@@ -50,9 +50,9 @@ import { JobService } from '../core/job.service';
             <div class="setting">
               <label>Target Resolution</label>
               <select [(ngModel)]="settings.upscale.target">
-                <option value="1080p">1080p Full HD</option>
+                <option value="8k">8K — Clean &amp; Sharp (recommended)</option>
                 <option value="4k">4K UHD</option>
-                <option value="8k">8K (Extreme)</option>
+                <option value="1080p">1080p Full HD</option>
               </select>
             </div>
 
@@ -111,13 +111,11 @@ import { JobService } from '../core/job.service';
           </div>
 
           <div class="edit-actions">
-            <button class="btn-ghost btn-edit" (click)="openEditor()" [disabled]="!selectedFile">
-              ✂ Quick Edit
-            </button>
             <button class="btn-primary btn-start" (click)="startEnhancement()" [disabled]="processing">
               {{ processing ? 'Creating Job...' : 'Start AI Enhancement →' }}
             </button>
           </div>
+          <p class="edit-hint">Want to trim or crop instead? Use the <a routerLink="/editor">Edit Video</a> tool.</p>
         </div>
       </div>
     </div>
@@ -168,12 +166,9 @@ import { JobService } from '../core/job.service';
       display: flex; gap: 12px; margin-top: 24px; grid-column: 1 / -1;
     }
     .edit-actions button { flex: 1; padding: 14px; font-size: 15px; }
-    .btn-edit {
-      background: transparent; border: 1px solid #2a2a3e; color: #aaaacc;
-      border-radius: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s;
-    }
-    .btn-edit:hover { border-color: #e94560; color: white; }
-    .btn-edit:disabled { opacity: 0.4; cursor: not-allowed; }
+    .edit-hint { margin-top: 14px; text-align: center; font-size: 13px; color: #8888aa; }
+    .edit-hint a { color: #e94560; text-decoration: none; font-weight: 600; }
+    .edit-hint a:hover { text-decoration: underline; }
     .btn-start {
       background: linear-gradient(135deg, #e94560, #ff6b6b);
       border: none; border-radius: 12px; color: white; font-weight: 600; cursor: pointer;
@@ -194,7 +189,7 @@ export class UploadComponent {
   settings = {
     denoise: { enabled: true, strength: 0.5 },
     deblur: { enabled: true, strength: 0.5 },
-    upscale: { enabled: true, target: '4k', model: 'Real-ESRGAN' },
+    upscale: { enabled: true, target: '8k', model: 'Real-ESRGAN' },
     temporal: { enabled: true, model: 'BasicVSR++' },
     faceRestore: { enabled: true, model: 'CodeFormer', strength: 0.6 },
     depthSimulation: { enabled: false, blurStrength: 0.3 },
@@ -233,17 +228,12 @@ export class UploadComponent {
     }
   }
 
-  openEditor() {
-    if (!this.selectedFile) return;
-    this.router.navigate(['/editor'], { state: { file: this.selectedFile } });
-  }
-
   async startEnhancement() {
     if (!this.selectedFile) return;
     this.processing = true;
     try {
       const result = await firstValueFrom(
-        this.jobService.create(this.title || 'Untitled', { pipeline: this.settings }, this.selectedFile)
+        this.jobService.create(this.title || 'Untitled', { pipeline: this.settings }, this.selectedFile, 'enhance')
       );
       if (result?.job?._id) this.router.navigate(['/processing', result.job._id]);
     } catch (err) {

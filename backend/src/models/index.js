@@ -4,7 +4,7 @@
 const db = require('../db');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
-const { buildDefaultPipeline, defaultStages } = require('./VideoJob');
+const { buildDefaultPipeline, defaultStages, defaultEditStages } = require('./VideoJob');
 
 // ── User Model ───────────────────────────────────────────
 const userSchema = new mongoose.Schema({
@@ -53,7 +53,7 @@ const User = {
 
 // ── VideoJob Model ───────────────────────────────────────
 const jobSchema = new mongoose.Schema({
-  userId: String, title: String, inputPath: String, outputPath: String,
+  userId: String, title: String, mode: { type: String, default: 'enhance' }, inputPath: String, outputPath: String,
   inputFormat: String, inputSize: Number, inputDuration: Number,
   inputResolution: { width: Number, height: Number },
   status: { type: String, default: 'queued' }, progress: { type: Number, default: 0 },
@@ -82,6 +82,7 @@ const VideoJob = {
 
   async create(data) {
     const col = this.collection();
+    const mode = data.mode === 'edit' ? 'edit' : 'enhance';
     const defaults = buildDefaultPipeline();
     const userPipe = data.pipeline || {};
     const pipeline = {};
@@ -90,8 +91,9 @@ const VideoJob = {
     }
     return col.create({
       ...data,
+      mode,
       pipeline,
-      pipelineStages: defaultStages(),
+      pipelineStages: mode === 'edit' ? defaultEditStages() : defaultStages(),
       status: 'queued', progress: 0,
     });
   },

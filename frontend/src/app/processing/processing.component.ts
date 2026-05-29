@@ -75,7 +75,9 @@ import { JobService, VideoJob } from '../core/job.service';
           </button>
           <button *ngIf="job.status === 'failed'" class="btn-primary" (click)="retry()">Retry</button>
           <button *ngIf="isProcessing() || job.status === 'queued'" class="btn-ghost" (click)="cancel()">Cancel</button>
-          <button *ngIf="isFinished()" class="btn-ghost" routerLink="/upload">New Enhancement</button>
+          <button *ngIf="isFinished()" class="btn-ghost" [routerLink]="job.mode === 'edit' ? '/editor' : '/upload'">
+            {{ job.mode === 'edit' ? 'New Edit' : 'New Enhancement' }}
+          </button>
         </div>
 
         <div class="error-box" *ngIf="job.error">
@@ -182,10 +184,13 @@ export class ProcessingComponent implements OnInit, OnDestroy {
 
   getStatusText(): string {
     if (!this.job) return '';
+    const isEdit = this.job.mode === 'edit';
     const map: Record<string, string> = {
-      queued: 'Waiting in queue', extracting: 'Extracting frames', processing: 'AI Processing',
+      queued: 'Waiting in queue', extracting: 'Extracting frames',
+      processing: isEdit ? 'Editing video' : 'AI Processing',
       enhancing: 'AI Enhancement', rebuilding: 'Rebuilding video', exporting: 'Exporting',
-      completed: '✓ Enhancement complete', failed: 'Processing failed', cancelled: 'Cancelled',
+      completed: isEdit ? '✓ Edit complete' : '✓ Enhancement complete',
+      failed: 'Processing failed', cancelled: 'Cancelled',
     };
     return map[this.job.status] || this.job.status;
   }
