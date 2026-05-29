@@ -26,7 +26,19 @@ const io = new Server(httpServer, {
   },
 });
 
-app.use(helmet({ crossOriginResourcePolicy: false }));
+app.use(helmet({
+  crossOriginResourcePolicy: false,
+  // Allow blob:/data: media + images so the editor/Studio can preview locally-created
+  // object URLs (uploaded video) and canvas thumbnails. Keeps all other Helmet defaults.
+  contentSecurityPolicy: {
+    useDefaults: true,
+    directives: {
+      'media-src': ["'self'", 'blob:', 'data:'],
+      'img-src': ["'self'", 'data:', 'blob:'],
+      'connect-src': ["'self'", 'blob:', 'ws:', 'wss:'],
+    },
+  },
+}));
 app.use(cors());
 app.use(morgan('dev'));
 app.use(express.json({ limit: '50mb' }));
