@@ -13,7 +13,7 @@ const stageSchema = new mongoose.Schema({
 const schema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   title: { type: String, required: true, trim: true },
-  mode: { type: String, enum: ['enhance', 'edit', 'merge', 'extract-audio', 'subtitle', 'denoise-audio'], default: 'enhance', index: true },
+  mode: { type: String, enum: ['enhance', 'edit', 'merge', 'extract-audio', 'subtitle', 'denoise-audio', 'studio'], default: 'enhance', index: true },
   inputPath: { type: String, required: true },
   inputPaths: [String], // for merge jobs (ordered list of source clips)
   inputFormat: String,
@@ -122,10 +122,11 @@ function stagesForMode(mode) {
     case 'extract-audio': return mkStages(['extract', 'export']);
     case 'subtitle': return mkStages(['extract', 'transcribe', 'export']);
     case 'denoise-audio': return mkStages(['clean', 'export']);
+    case 'studio': return mkStages(['edit', 'enhance', 'audio', 'subtitle', 'export']);
     default: return defaultStages();
   }
 }
 
-const JOB_MODES = ['enhance', 'edit', 'merge', 'extract-audio', 'subtitle', 'denoise-audio'];
+const JOB_MODES = ['enhance', 'edit', 'merge', 'extract-audio', 'subtitle', 'denoise-audio', 'studio'];
 
 module.exports = { VideoJobModel, schema, buildDefaultPipeline, defaultStages, defaultEditStages, stagesForMode, JOB_MODES };

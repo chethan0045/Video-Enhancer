@@ -38,6 +38,12 @@ export const routes: Routes = [
       import('./settings/settings.component').then((m) => m.SettingsComponent),
   },
   {
+    path: 'studio',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./studio/studio.component').then((m) => m.StudioComponent),
+  },
+  {
     path: 'editor',
     canActivate: [authGuard],
     loadComponent: () =>

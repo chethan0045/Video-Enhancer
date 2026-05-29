@@ -24,7 +24,8 @@ import { JobService, VideoJob } from '../core/job.service';
 
       <div class="hero">
         <h2>AI Cinematic Video Remaster</h2>
-        <p>Two separate tools — enhance footage to clean 8K, or quickly trim and crop a clip.</p>
+        <p>Open the all-in-one Studio to trim, crop, enhance, clean audio and auto-subtitle in one place — or use a quick single-purpose tool.</p>
+        <button class="btn-studio" routerLink="/studio">🎬 Open Studio — All-in-one Editor</button>
         <div class="tool-cards">
           <div class="tool-card" routerLink="/upload">
             <div class="tool-icon">✨</div>
@@ -129,6 +130,8 @@ import { JobService, VideoJob } from '../core/job.service';
     }
     .hero h2 { font-size: 36px; font-weight: 700; margin-bottom: 12px; }
     .hero p { color: #8888aa; font-size: 16px; max-width: 560px; margin: 0 auto 32px; line-height: 1.6; }
+    .btn-studio { display: inline-block; margin-bottom: 28px; padding: 16px 32px; background: linear-gradient(135deg, #3B82F6, #6366f1); border: none; border-radius: 14px; color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; box-shadow: 0 8px 24px rgba(59,130,246,.3); }
+    .btn-studio:hover { transform: translateY(-2px); }
     .tool-cards { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; }
     .tool-card {
       width: 300px; text-align: left; background: #14141f; border: 1px solid #1e1e30;
@@ -194,7 +197,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   private pollTimer: any = null;
 
   modeLabel(mode?: string): string {
-    const labels: Record<string, string> = { enhance: 'Enhance', edit: 'Edit', merge: 'Merge', 'extract-audio': 'Audio', subtitle: 'Subtitles', 'denoise-audio': 'Denoise' };
+    const labels: Record<string, string> = { enhance: 'Enhance', edit: 'Edit', merge: 'Merge', 'extract-audio': 'Audio', subtitle: 'Subtitles', 'denoise-audio': 'Denoise', studio: 'Studio' };
     return labels[mode || 'enhance'] || 'Enhance';
   }
 

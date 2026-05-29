@@ -845,10 +845,138 @@ async function processDenoiseAudio(jobId, inputPath, settings = {}) {
   console.log(`[NoiseRemoval] Job ${jobId} complete (nr=${nr}dB)`);
 }
 
+/**
+ * Unified Studio export — applies trim + crop + enhance (resolution/denoise/color)
+ * + audio cleanup in one FFmpeg pass, then optionally transcribes and burns/embeds
+ * subtitles. One job, one downloadable video.
+ */
+async function processStudio(jobId, inputPath, settings = {}) {
+  const job = await VideoJob.findById(jobId);
+  if (!job) throw new Error('Job not found');
+  if (!checkFfmpeg()) throw new Error('FFmpeg not available');
+
+  const p = settings.pipeline || job.pipeline || {};
+  const editor = p.editor || {}, trim = editor.trim || {}, crop = editor.crop || {};
+  const enh = p.enhance || {}, audio = p.audioCleanup || {}, subs = p.subtitles || {};
+  const info = getVideoInfo(inputPath);
+  const srcH = info.height || 720;
+
+  const outputDir = path.join(__dirname, '..', 'outputs', jobId);
+  const tempDir = path.join(outputDir, 'temp');
+  fs.mkdirSync(tempDir, { recursive: true });
+  const finalVideo = path.join(outputDir, 'output.mp4');
+
+  await VideoJob.updateById(jobId, { $set: { status: 'processing', progress: 3 } });
+  emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: 3 });
+  await setStageStatus(jobId, 'edit', 'processing', 0);
+
+  // Enhance target resolution (capped on software-only hosts).
+  let targetH = { '1080p': 1080, '2k': 1440, '4k': 2160, '8k': 4320 }[enh.target] || 0;
+  const hwAvailable = hw.nvenc || hw.qsv || hw.amf || hw.nvencHevc || hw.qsvHevc || hw.amfHevc;
+  const swMax = parseInt(process.env.FFMPEG_SW_MAX_HEIGHT || '1440', 10);
+  if (!hwAvailable && targetH > swMax) targetH = swMax;
+
+  const ts = parseFloat(trim.start) || 0, te = parseFloat(trim.end) || 0;
+  const doTrim = trim.enabled && te > ts;
+  const doCrop = crop.enabled && (crop.width || 0) > 0 && (crop.height || 0) > 0;
+
+  // ── Video filters ──
+  const vf = [];
+  if (enh.enabled && enh.denoise !== false) vf.push('hqdn3d=2:1.5:3:3');
+  const luts = {
+    cinematic: 'eq=saturation=1.1:contrast=1.08:brightness=0.01',
+    teal_orange: 'colorbalance=rs=0.08:gs=-0.03:bs=-0.08,eq=saturation=1.15',
+    warm: 'colorbalance=rs=0.08:gs=0.03:bs=-0.08,eq=saturation=1.02',
+    cool: 'colorbalance=rs=-0.03:bs=0.08,eq=saturation=0.95',
+    vintage: 'colorbalance=rs=0.06:bs=-0.06,eq=saturation=0.8:contrast=1.05',
+  };
+  if (enh.enabled && enh.color && luts[enh.color]) vf.push(luts[enh.color]);
+  if (doCrop) vf.push(`crop=${crop.width}:${crop.height}:${crop.x}:${crop.y}`);
+  const baseH = doCrop ? crop.height : srcH;
+  if (enh.enabled && targetH && targetH > baseH) {
+    vf.push(`scale=-2:${targetH}:flags=${targetH >= 4320 ? 'bicubic' : 'lanczos'}`);
+  }
+
+  // ── Audio filters ──
+  const af = [];
+  if (audio.enabled) {
+    const nr = Math.round(6 + Math.min(1, Math.max(0, parseFloat(audio.strength ?? 0.6))) * 30);
+    af.push('highpass=f=85', `afftdn=nr=${nr}:nf=-30`);
+  }
+
+  await setStageStatus(jobId, 'edit', 'completed', 100);
+  await setStageStatus(jobId, 'enhance', 'processing', 0);
+
+  const wantSubs = !!subs.enabled;
+  const pass1 = wantSubs ? path.join(tempDir, 'pass1.mp4') : finalVideo;
+  const enc = buildEncoderArgs(canHwEncode(targetH || srcH), info, pass1, targetH || srcH);
+  const out = enc.pop();
+  const args = ['-y'];
+  if (doTrim) args.push('-ss', String(ts));
+  args.push('-i', inputPath);
+  if (doTrim) args.push('-t', String(te - ts));
+  if (vf.length) args.push('-vf', vf.join(','));
+  if (af.length) args.push('-af', af.join(','));
+  args.push(...enc, '-c:a', 'aac', '-b:a', '192k', out);
+
+  const dur = doTrim ? (te - ts) : info.duration;
+  await runFFmpeg(args, (el) => {
+    const ceil = wantSubs ? 60 : 95;
+    const pct = dur > 0 ? Math.min(ceil, 5 + Math.round((el / dur) * (ceil - 5))) : 40;
+    emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: pct });
+    VideoJob.updateById(jobId, { $set: { progress: pct } }).catch(() => {});
+  });
+  await setStageStatus(jobId, 'enhance', 'completed', 100);
+  await setStageStatus(jobId, 'audio', audio.enabled ? 'completed' : 'skipped', 100);
+
+  // ── Subtitles: transcribe the processed clip, then burn / embed ──
+  if (wantSubs) {
+    await setStageStatus(jobId, 'subtitle', 'processing', 0);
+    await VideoJob.updateById(jobId, { $set: { progress: 65 } });
+    emitJobProgress(jobId, { userId: job.userId, status: 'processing', progress: 65 });
+    const srtPath = path.join(outputDir, 'subtitles.srt');
+    const pcmPath = path.join(tempDir, 'a.f32le');
+    await runFFmpeg(['-y', '-i', pass1, '-vn', '-ac', '1', '-ar', '16000', '-f', 'f32le', pcmPath]);
+    const buf = fs.readFileSync(pcmPath);
+    const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+    const { transcribeToSrt } = require('../services/transcribe');
+    const modelMap = { tiny: 'Xenova/whisper-tiny', base: 'Xenova/whisper-base', small: 'Xenova/whisper-small' };
+    const srt = await transcribeToSrt(new Float32Array(ab), { model: modelMap[subs.model] || 'Xenova/whisper-tiny', language: subs.language || 'auto' });
+    fs.writeFileSync(srtPath, srt || '');
+    await setStageStatus(jobId, 'subtitle', 'completed', 100);
+    await setStageStatus(jobId, 'export', 'processing', 0);
+
+    if (subs.output === 'embed' && srt.trim()) {
+      await runFFmpeg(['-y', '-i', pass1, '-i', srtPath, '-map', '0', '-map', '1', '-c', 'copy',
+        '-c:s', 'mov_text', '-metadata:s:s:0', 'language=und', '-movflags', '+faststart', finalVideo]);
+    } else if (subs.output === 'srt') {
+      fs.renameSync(pass1, finalVideo); // keep srt as a side artifact; deliver the video
+    } else {
+      const style = "force_style='Fontsize=22,PrimaryColour=&H00FFFFFF&,OutlineColour=&H90000000&,BorderStyle=3,Outline=1,Shadow=0,MarginV=28'";
+      const e2 = buildEncoderArgs(canHwEncode(targetH || srcH), info, finalVideo, targetH || srcH);
+      const o2 = e2.pop();
+      await runFFmpeg(['-y', '-i', pass1, '-vf', `subtitles=subtitles.srt:${style}`, ...e2, '-c:a', 'copy', o2], null, { cwd: outputDir });
+    }
+  }
+
+  await setStageStatus(jobId, 'export', 'completed', 100);
+  try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+  const fin = getVideoInfo(finalVideo);
+  await VideoJob.updateById(jobId, {
+    $set: {
+      status: 'completed', progress: 100, completedAt: new Date(), outputPath: finalVideo,
+      inputDuration: fin.duration, inputResolution: { width: fin.width, height: fin.height },
+    },
+  });
+  emitJobProgress(jobId, { userId: job.userId, status: 'completed', progress: 100 });
+  console.log(`[Studio] Job ${jobId} complete`);
+}
+
 // Single dispatch entry — routes a job to the right processor by mode.
 function runJob({ jobId, inputPath, inputPaths, pipeline, mode }) {
   const settings = { pipeline };
   switch (mode) {
+    case 'studio': return processStudio(jobId, inputPath, settings);
     case 'edit': return processEdit(jobId, inputPath, settings);
     case 'merge': return processMerge(jobId, inputPaths, settings);
     case 'extract-audio': return processExtractAudio(jobId, inputPath, settings);

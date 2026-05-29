@@ -185,11 +185,11 @@ export class ProcessingComponent implements OnInit, OnDestroy {
     const mode = this.job.mode || 'enhance';
     const processingLabel: Record<string, string> = {
       enhance: 'AI Processing', edit: 'Editing video', merge: 'Merging clips',
-      'extract-audio': 'Extracting audio', subtitle: 'Transcribing audio', 'denoise-audio': 'Removing noise',
+      'extract-audio': 'Extracting audio', subtitle: 'Transcribing audio', 'denoise-audio': 'Removing noise', studio: 'Processing your edit',
     };
     const doneLabel: Record<string, string> = {
       enhance: '✓ Enhancement complete', edit: '✓ Edit complete', merge: '✓ Merge complete',
-      'extract-audio': '✓ Audio extracted', subtitle: '✓ Subtitles ready', 'denoise-audio': '✓ Noise removed',
+      'extract-audio': '✓ Audio extracted', subtitle: '✓ Subtitles ready', 'denoise-audio': '✓ Noise removed', studio: '✓ Export ready',
     };
     const map: Record<string, string> = {
       queued: 'Waiting in queue', extracting: 'Extracting frames',
@@ -202,11 +202,11 @@ export class ProcessingComponent implements OnInit, OnDestroy {
   }
 
   newRoute(): string {
-    return ({ edit: '/editor', merge: '/merge', 'extract-audio': '/extract-audio', subtitle: '/subtitles', 'denoise-audio': '/denoise-audio' } as any)[this.job?.mode || 'enhance'] || '/upload';
+    return ({ studio: '/studio', edit: '/editor', merge: '/merge', 'extract-audio': '/extract-audio', subtitle: '/subtitles', 'denoise-audio': '/denoise-audio' } as any)[this.job?.mode || 'enhance'] || '/upload';
   }
 
   newLabel(): string {
-    return ({ edit: 'New Edit', merge: 'New Merge', 'extract-audio': 'Extract Another', subtitle: 'New Subtitles', 'denoise-audio': 'Clean Another' } as any)[this.job?.mode || 'enhance'] || 'New Enhancement';
+    return ({ studio: 'New Project', edit: 'New Edit', merge: 'New Merge', 'extract-audio': 'Extract Another', subtitle: 'New Subtitles', 'denoise-audio': 'Clean Another' } as any)[this.job?.mode || 'enhance'] || 'New Enhancement';
   }
 
   formatStageName(name: string): string {
