@@ -3,15 +3,15 @@
  * No Python required — runs on any Node host, including Render. Replaces the
  * old python-engine/transcribe.py path for the subtitle tool.
  */
-let asrPromise = null;
+const asrCache = {}; // one entry per model (don't cache rejected loads)
 
 async function getAsr(model) {
-  if (!asrPromise) {
-    const { pipeline, env } = await import('@huggingface/transformers');
-    env.allowLocalModels = false; // pull the model from the HF hub (cached after first use)
-    asrPromise = pipeline('automatic-speech-recognition', model);
-  }
-  return asrPromise;
+  if (asrCache[model]) return asrCache[model];
+  const { pipeline, env } = await import('@huggingface/transformers');
+  env.allowLocalModels = false; // pull the model from the HF hub (cached after first use)
+  const p = await pipeline('automatic-speech-recognition', model);
+  asrCache[model] = p;
+  return p;
 }
 
 function srtTime(t) {
@@ -39,7 +39,18 @@ function chunksToSrt(chunks) {
  * @returns {Promise<string>} SRT text (may be empty if no speech)
  */
 async function transcribeToSrt(pcm, { model = 'Xenova/whisper-tiny', language = 'auto' } = {}) {
-  const asr = await getAsr(model);
+  let asr;
+  try {
+    asr = await getAsr(model);
+  } catch (e) {
+    // Model download failed (e.g. network) — fall back to the small, usually-cached tiny model.
+    if (model !== 'Xenova/whisper-tiny') {
+      console.warn(`[transcribe] could not load ${model} (${e.message}); falling back to whisper-tiny`);
+      asr = await getAsr('Xenova/whisper-tiny');
+    } else {
+      throw new Error('Could not download the speech model. Check your internet / HuggingFace access and retry. (' + e.message + ')');
+    }
+  }
   const opts = { chunk_length_s: 30, stride_length_s: 5, return_timestamps: true };
   if (language && language !== 'auto') opts.language = language;
   const result = await asr(pcm, opts);
