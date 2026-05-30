@@ -114,6 +114,7 @@ import { JobService } from '../core/job.service';
             <div class="setting full">
               <label>Color Grade</label>
               <select [(ngModel)]="settings.colorGrading.lut">
+                <option value="restore">Auto Restore (faded video)</option>
                 <option value="cinematic">Cinematic</option>
                 <option value="teal_orange">Teal & Orange</option>
                 <option value="warm">Warm Film</option>

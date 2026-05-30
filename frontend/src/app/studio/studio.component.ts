@@ -162,7 +162,7 @@ interface Rect { left: number; top: number; width: number; height: number; }
           <h5>✨ Enhance <label class="sw"><input type="checkbox" [(ngModel)]="enhance.enabled"/><span></span></label></h5>
           <ng-container *ngIf="enhance.enabled">
             <label class="fld">Resolution<select [(ngModel)]="enhance.target"><option value="1080p">1080p</option><option value="2k">2K</option><option value="4k">4K</option><option value="8k">Super Resolution 8K</option></select></label>
-            <label class="fld">Color grade<select [(ngModel)]="enhance.color"><option value="">None</option><option value="cinematic">Cinematic</option><option value="teal_orange">Teal & Orange</option><option value="warm">Warm</option><option value="cool">Cool</option><option value="vintage">Vintage</option></select></label>
+            <label class="fld">Color<select [(ngModel)]="enhance.color"><option value="restore">✨ Auto Restore (faded video)</option><option value="">None</option><option value="cinematic">Cinematic</option><option value="teal_orange">Teal & Orange</option><option value="warm">Warm</option><option value="cool">Cool</option><option value="vintage">Vintage</option></select></label>
             <label class="chk"><input type="checkbox" [(ngModel)]="enhance.denoise"/> Denoise (clean grain/noise)</label>
             <label class="fld">Sharpen detail — {{ enhance.sharpen }}<input type="range" min="0" max="1" step="0.1" [(ngModel)]="enhance.sharpen"/></label>
           </ng-container>
@@ -346,7 +346,7 @@ export class StudioComponent implements OnDestroy {
   trimStart = 0;
   trimEnd = 0;
   crop = { enabled: false, x: 0, y: 0, width: 0, height: 0 };
-  enhance = { enabled: true, target: '1080p', color: 'cinematic', denoise: true, sharpen: 0.4 };
+  enhance = { enabled: true, target: '1080p', color: 'restore', denoise: true, sharpen: 0.4 };
   audio = { enabled: false, strength: 0.6 };
   subs = { enabled: false, language: 'auto', model: 'tiny', output: 'burn' };
   speed = 1;

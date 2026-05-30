@@ -286,6 +286,7 @@ async function processVideo(jobId, inputPath, settings = {}) {
   }
 
   const luts = {
+    restore: 'normalize=blackpt=black:whitept=white:smoothing=20,vibrance=intensity=0.35',
     cinematic: 'eq=saturation=1.1:contrast=1.08:brightness=0.01',
     teal_orange: 'colorbalance=rs=0.08:gs=-0.03:bs=-0.08,eq=saturation=1.15',
     warm: 'colorbalance=rs=0.08:gs=0.03:bs=-0.08,eq=saturation=1.02',
@@ -911,6 +912,9 @@ async function processStudio(jobId, inputPath, settings = {}) {
   const vf = [];
   if (enh.enabled && enh.denoise !== false) vf.push('hqdn3d=2:1.5:3:3');
   const luts = {
+    // Auto color/contrast restoration — revives faded, dull or color-cast footage by
+    // stretching each channel's histogram + boosting muted colors.
+    restore: 'normalize=blackpt=black:whitept=white:smoothing=20,vibrance=intensity=0.35',
     cinematic: 'eq=saturation=1.1:contrast=1.08:brightness=0.01',
     teal_orange: 'colorbalance=rs=0.08:gs=-0.03:bs=-0.08,eq=saturation=1.15',
     warm: 'colorbalance=rs=0.08:gs=0.03:bs=-0.08,eq=saturation=1.02',
