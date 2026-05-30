@@ -52,4 +52,36 @@ async function cleanupSrt(srt) {
   return out || srt;
 }
 
-module.exports = { configured, complete, translateSrt, cleanupSrt, langName, LANGS };
+// Strip SRT cue numbers/timestamps down to plain dialogue.
+function srtToText(srt) {
+  return (srt || '')
+    .replace(/^\d+\s*$/gm, '')
+    .replace(/\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,.]\d{3}/g, '')
+    .replace(/\n{2,}/g, '\n').replace(/[ \t]+/g, ' ').trim();
+}
+
+function parseJsonObject(t) {
+  const m = t.match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  try { return JSON.parse(m[0]); } catch { return null; }
+}
+
+// Generate { title, description, tags[] } from a transcript (SRT or plain text).
+async function generateMetadata(transcript) {
+  const text = srtToText(transcript).slice(0, 8000);
+  if (!text) return null;
+  const prompt =
+    `From this video transcript, write metadata as STRICT JSON with keys: ` +
+    `"title" (catchy, under 70 chars), "description" (2–3 engaging sentences), ` +
+    `"tags" (array of 5–8 lowercase keywords). Output ONLY the JSON object.\n\nTranscript:\n${text}`;
+  const out = await complete(prompt, { temperature: 0.4 });
+  const meta = parseJsonObject(out);
+  if (!meta) return null;
+  return {
+    title: String(meta.title || '').trim(),
+    description: String(meta.description || '').trim(),
+    tags: Array.isArray(meta.tags) ? meta.tags.map(String).slice(0, 12) : [],
+  };
+}
+
+module.exports = { configured, complete, translateSrt, cleanupSrt, generateMetadata, srtToText, langName, LANGS };

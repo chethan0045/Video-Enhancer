@@ -20,6 +20,9 @@ export interface VideoJob {
   inputDuration?: number;
   inputResolution?: { width: number; height: number };
   thumbnailPath?: string;
+  aiTitle?: string;
+  aiDescription?: string;
+  aiTags?: string[];
 }
 
 @Injectable({ providedIn: 'root' })

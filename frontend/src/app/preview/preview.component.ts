@@ -54,6 +54,22 @@ import { JobService, VideoJob } from '../core/job.service';
           <pre class="srt">{{ srtText || 'No speech detected in this audio.' }}</pre>
         </div>
 
+        <div class="ai-meta" *ngIf="job.aiTitle || job.aiDescription">
+          <h3>✨ AI Title &amp; Description</h3>
+          <div class="meta-field" *ngIf="job.aiTitle">
+            <label>Title <button class="copy" (click)="copy(job.aiTitle!)">Copy</button></label>
+            <p class="title">{{ job.aiTitle }}</p>
+          </div>
+          <div class="meta-field" *ngIf="job.aiDescription">
+            <label>Description <button class="copy" (click)="copy(job.aiDescription!)">Copy</button></label>
+            <p>{{ job.aiDescription }}</p>
+          </div>
+          <div class="meta-field" *ngIf="job.aiTags?.length">
+            <label>Tags</label>
+            <div class="tags"><span *ngFor="let t of job.aiTags">{{ t }}</span></div>
+          </div>
+        </div>
+
         <div class="job-details">
           <h3>{{ job.mode === 'edit' ? 'Edit Details' : 'Enhancement Details' }}</h3>
           <div class="details-grid">
@@ -133,6 +149,16 @@ import { JobService, VideoJob } from '../core/job.service';
       color: #8888aa; font-size: 12px;
     }
     .ctrl-label input[type="range"] { flex: 1; accent-color: #e94560; }
+    .ai-meta { background: #14141f; border: 1px solid #2a1e30; border-radius: 16px; padding: 24px; margin-bottom: 24px; }
+    .ai-meta h3 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+    .meta-field { margin-bottom: 16px; }
+    .meta-field label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #8888aa; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; }
+    .meta-field .title { font-size: 17px; font-weight: 600; color: #fff; }
+    .meta-field p { font-size: 14px; color: #cfcfe0; line-height: 1.5; }
+    .copy { background: #1e1e30; border: 1px solid #2a2a3e; color: #aaaacc; border-radius: 6px; padding: 2px 10px; font-size: 11px; cursor: pointer; text-transform: none; letter-spacing: 0; }
+    .copy:hover { border-color: #e94560; color: #fff; }
+    .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .tags span { background: #1e1e30; border: 1px solid #2a2a3e; border-radius: 14px; padding: 4px 12px; font-size: 12px; color: #aaaacc; }
     .job-details {
       background: #14141f; border: 1px solid #1e1e30; border-radius: 16px; padding: 24px; margin-bottom: 24px;
     }
@@ -267,6 +293,8 @@ export class PreviewComponent implements OnInit, AfterViewInit {
     const filename = p.split('\\').pop() || p.split('/').pop();
     return `/${type}/${filename}`;
   }
+
+  copy(text: string) { navigator.clipboard?.writeText(text).catch(() => {}); }
 
   download() {
     if (!this.job?.outputPath) return;

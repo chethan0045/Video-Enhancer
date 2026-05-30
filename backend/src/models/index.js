@@ -54,6 +54,7 @@ const User = {
 // ── VideoJob Model ───────────────────────────────────────
 const jobSchema = new mongoose.Schema({
   userId: String, title: String, mode: { type: String, default: 'enhance' }, inputPath: String, inputPaths: Array, outputPath: String,
+  aiTitle: String, aiDescription: String, aiTags: Array,
   inputFormat: String, inputSize: Number, inputDuration: Number,
   inputResolution: { width: Number, height: Number },
   status: { type: String, default: 'queued' }, progress: { type: Number, default: 0 },

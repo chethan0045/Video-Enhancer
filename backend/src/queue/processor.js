@@ -663,6 +663,20 @@ async function applySrtLlm(srt, subs) {
   return out;
 }
 
+// Generate AI title/description/tags from the transcript and store them on the job.
+async function applyMetadata(jobId, srt, subs) {
+  if (!subs.metadata) return;
+  const llm = require('../services/llm');
+  if (!llm.configured() || !srt || !srt.trim()) return;
+  try {
+    const meta = await llm.generateMetadata(srt);
+    if (meta) {
+      await VideoJob.updateById(jobId, { $set: { aiTitle: meta.title, aiDescription: meta.description, aiTags: meta.tags } });
+      console.log(`[LLM] generated metadata for ${jobId}`);
+    }
+  } catch (e) { console.warn('[LLM] metadata generation failed:', e.message); }
+}
+
 /**
  * Generate subtitles (.srt) in pure Node via Transformers.js (Whisper on
  * onnxruntime) — no Python dependency, so it runs on any Node host incl. Render.
@@ -712,6 +726,7 @@ async function processSubtitle(jobId, inputPath, settings = {}) {
 
   srt = await applySrtLlm(srt, p);
   fs.writeFileSync(srtPath, srt || '');
+  await applyMetadata(jobId, srt, p);
   await setStageStatus(jobId, 'transcribe', 'completed', 100);
 
   // Output mode: 'srt' (file), 'burn' (hardcoded captions, default) or 'embed' (soft track).
@@ -1011,6 +1026,7 @@ async function processStudio(jobId, inputPath, settings = {}) {
     let srt = await transcribeToSrt(new Float32Array(ab), { model: modelMap[subs.model] || 'Xenova/whisper-tiny', language: subs.language || 'auto' });
     srt = await applySrtLlm(srt, subs);
     fs.writeFileSync(srtPath, srt || '');
+    await applyMetadata(jobId, srt, subs);
     await setStageStatus(jobId, 'subtitle', 'completed', 100);
     await setStageStatus(jobId, 'export', 'processing', 0);
 
