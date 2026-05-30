@@ -9,9 +9,19 @@ async function getAsr(model) {
   if (asrCache[model]) return asrCache[model];
   const { pipeline, env } = await import('@huggingface/transformers');
   env.allowLocalModels = false; // pull the model from the HF hub (cached after first use)
-  const p = await pipeline('automatic-speech-recognition', model);
-  asrCache[model] = p;
-  return p;
+  // Retry a few times — model downloads from HuggingFace can transiently "fetch failed".
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const p = await pipeline('automatic-speech-recognition', model);
+      asrCache[model] = p;
+      return p;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+    }
+  }
+  throw lastErr;
 }
 
 function srtTime(t) {
