@@ -71,6 +71,17 @@ type ToolMode = 'extract-audio' | 'subtitle' | 'denoise-audio';
               </select>
             </div>
             <div class="setting">
+              <label>Translate to (AI)</label>
+              <select [(ngModel)]="translateTo">
+                <option value="none">No translation</option>
+                <option value="en">English</option><option value="kn">Kannada</option><option value="hi">Hindi</option>
+                <option value="ta">Tamil</option><option value="te">Telugu</option><option value="ml">Malayalam</option>
+              </select>
+            </div>
+            <div class="setting checkbox-row">
+              <label><input type="checkbox" [(ngModel)]="cleanup" /> Clean up text with AI (punctuation/casing)</label>
+            </div>
+            <div class="setting">
               <label>Output</label>
               <select [(ngModel)]="subtitleOutput">
                 <option value="burn">Burn into video (always visible)</option>
@@ -132,6 +143,8 @@ export class ToolComponent implements OnInit {
   whisperModel = 'tiny';
   language = 'auto';
   subtitleOutput = 'burn';
+  translateTo = 'none';
+  cleanup = false;
   noiseStrength = 0.6;
 
   private metaByMode: Record<ToolMode, any> = {
@@ -168,7 +181,7 @@ export class ToolComponent implements OnInit {
     this.processing = true;
     const pipelineByMode: Record<ToolMode, any> = {
       'extract-audio': { audioFormat: this.audioFormat },
-      'subtitle': { whisperModel: this.whisperModel, language: this.language, subtitleOutput: this.subtitleOutput },
+      'subtitle': { whisperModel: this.whisperModel, language: this.language, subtitleOutput: this.subtitleOutput, translateTo: this.translateTo, cleanup: this.cleanup },
       'denoise-audio': { noiseStrength: this.noiseStrength },
     };
     const settings = { pipeline: pipelineByMode[this.mode] };

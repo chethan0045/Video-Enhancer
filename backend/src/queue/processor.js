@@ -646,6 +646,23 @@ async function processMerge(jobId, inputPaths, settings = {}) {
   console.log(`[Merge] Job ${jobId} complete (${paths.length} clips → ${W}x${H})`);
 }
 
+// Optionally clean up / translate the SRT with the LLM (Gemini). Degrades to the
+// original text if no GEMINI_API_KEY or the call fails.
+async function applySrtLlm(srt, subs) {
+  if (!srt || !srt.trim()) return srt;
+  const llm = require('../services/llm');
+  if (!llm.configured()) return srt;
+  let out = srt;
+  try {
+    if (subs.cleanup) out = await llm.cleanupSrt(out);
+    if (subs.translateTo && subs.translateTo !== 'none') out = await llm.translateSrt(out, subs.translateTo);
+  } catch (e) {
+    console.warn('[LLM] subtitle post-process failed, keeping original:', e.message);
+    return srt;
+  }
+  return out;
+}
+
 /**
  * Generate subtitles (.srt) in pure Node via Transformers.js (Whisper on
  * onnxruntime) — no Python dependency, so it runs on any Node host incl. Render.
@@ -693,6 +710,7 @@ async function processSubtitle(jobId, inputPath, settings = {}) {
     throw new Error('Subtitle transcription failed: ' + e.message);
   }
 
+  srt = await applySrtLlm(srt, p);
   fs.writeFileSync(srtPath, srt || '');
   await setStageStatus(jobId, 'transcribe', 'completed', 100);
 
@@ -990,7 +1008,8 @@ async function processStudio(jobId, inputPath, settings = {}) {
     const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
     const { transcribeToSrt } = require('../services/transcribe');
     const modelMap = { tiny: 'Xenova/whisper-tiny', base: 'Xenova/whisper-base', small: 'Xenova/whisper-small' };
-    const srt = await transcribeToSrt(new Float32Array(ab), { model: modelMap[subs.model] || 'Xenova/whisper-tiny', language: subs.language || 'auto' });
+    let srt = await transcribeToSrt(new Float32Array(ab), { model: modelMap[subs.model] || 'Xenova/whisper-tiny', language: subs.language || 'auto' });
+    srt = await applySrtLlm(srt, subs);
     fs.writeFileSync(srtPath, srt || '');
     await setStageStatus(jobId, 'subtitle', 'completed', 100);
     await setStageStatus(jobId, 'export', 'processing', 0);
@@ -1046,6 +1065,7 @@ function getCapabilities() {
     hwH264: [hw.nvenc && 'nvenc', hw.qsv && 'qsv', hw.amf && 'amf'].filter(Boolean),
     hwHevc8k: [hw.nvencHevc && 'nvenc', hw.qsvHevc && 'qsv', hw.amfHevc && 'amf'].filter(Boolean),
     aiTier: !!(process.env.RUNPOD_API_KEY && process.env.RUNPOD_ENDPOINT_ID && process.env.PUBLIC_BASE_URL),
+    llm: !!process.env.GEMINI_API_KEY,
     memoryMB: MEM_MB,
     lowMemory: LOW_MEM,
   };

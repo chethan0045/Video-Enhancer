@@ -149,6 +149,8 @@ interface Rect { left: number; top: number; width: number; height: number; }
             <p class="hint">Auto-transcribed with Whisper, added on export.</p>
             <label class="fld">Language<select [(ngModel)]="subs.language"><option value="auto">Auto-detect</option><option value="en">English</option><option value="kn">Kannada</option><option value="te">Telugu</option><option value="hi">Hindi</option><option value="ta">Tamil</option></select></label>
             <label class="fld">Accuracy<select [(ngModel)]="subs.model"><option value="tiny">Tiny — fastest</option><option value="base">Base</option><option value="small">Small — best</option></select></label>
+            <label class="fld">Translate to (AI)<select [(ngModel)]="subs.translateTo"><option value="none">No translation</option><option value="en">English</option><option value="kn">Kannada</option><option value="hi">Hindi</option><option value="ta">Tamil</option><option value="te">Telugu</option><option value="ml">Malayalam</option></select></label>
+            <label class="chk"><input type="checkbox" [(ngModel)]="subs.cleanup"/> Clean up text with AI</label>
             <label class="fld">Output<select [(ngModel)]="subs.output"><option value="burn">Burn into video</option><option value="embed">Embed as track</option><option value="srt">.srt only</option></select></label>
           </ng-container>
         </div>
@@ -348,7 +350,7 @@ export class StudioComponent implements OnDestroy {
   crop = { enabled: false, x: 0, y: 0, width: 0, height: 0 };
   enhance = { enabled: true, target: '1080p', color: 'restore', denoise: true, sharpen: 0.4 };
   audio = { enabled: false, strength: 0.6 };
-  subs = { enabled: false, language: 'auto', model: 'tiny', output: 'burn' };
+  subs = { enabled: false, language: 'auto', model: 'tiny', output: 'burn', translateTo: 'none', cleanup: false };
   speed = 1;
   rotate = 0;
   exportFormat = 'mp4';
@@ -492,7 +494,7 @@ export class StudioComponent implements OnDestroy {
       },
       enhance: { enabled: this.enhance.enabled, target: this.enhance.target, color: this.enhance.color, denoise: this.enhance.denoise, sharpen: this.enhance.sharpen },
       audioCleanup: { enabled: this.audio.enabled, strength: this.audio.strength },
-      subtitles: { enabled: this.subs.enabled, language: this.subs.language, model: this.subs.model, output: this.subs.output },
+      subtitles: { enabled: this.subs.enabled, language: this.subs.language, model: this.subs.model, output: this.subs.output, translateTo: this.subs.translateTo, cleanup: this.subs.cleanup },
       export: { format: this.exportFormat, codec: this.exportCodec },
     };
     try {
